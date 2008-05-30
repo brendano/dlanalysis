@@ -1,12 +1,14 @@
 options(showWarnCalls=T, showErrorCalls=T)
 if (system("stty -a &>/dev/null") == 0)
-  options(width= as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1])) )
+  options(width= as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1])) - 1 )
 
 
 
 util = new.env()
 
 util$unitnorm <- function(x, ...)  (x - mean(x,...)) / sd(x,...)
+
+util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
 
 util$msg <- function(...)  cat(..., "\n", file=stderr())
 
@@ -15,6 +17,12 @@ util$strlen <- function(s)  length(strsplit(s,"")[[1]])
 util$strmatch <- function(pat,s)  length(grep(pat,s)) > 0
 
 util$strstrip <- function(s)  gsub("^\\s*|\\s*$", "", s)
+
+util$is_empty <- function(collection)  length(collection) == 0
+
+util$as.c <- as.character
+
+util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
 
 util$unwhich <- function(indices, len=length(indices)) {
   ret = rep(F,len)
@@ -50,14 +58,21 @@ util$fill_bool <- function(bool, true='yes', false='no') {
   ret
 }
 
-# "boolean" grep: return a logical vector ready for &, | etc ops.
-# so bgrep works in the world of vector ops like ==, %in%, etc.
+util$trmap <- function(vec, translation_table) {
+  ret = rep(NA, length(vec))
+  for (x in names(translation_table))
+    ret[as.c(vec)==x] = translation_table[[x]]
+  ret
+}
 
 util$bgrep <- function(pat,x, ...) {
+  # "boolean" grep: return a logical vector ready for &, | etc ops.
+  # so bgrep works in the world of vector ops like ==, %in%, etc.
   unwhich(grep(pat,x,...), length(x))
 }
 
 util$tapply2 <- function(x, ...) {
+  # slightly nicer than tapply for some reason, i dont remember
   if (is.factor(x)) {
     r = factor(tapply(as.character(x), ...), levels=levels(x))
   } else {
@@ -80,10 +95,6 @@ util$select <- function(collection, fn) {
       r = c(r, x)
   r
 }
-
-util$is_empty <- function(collection)  length(collection) == 0
-
-util$as.c <- as.character
 
 util$xprod <- function(xs,ys) {
   ret = list()
@@ -117,7 +128,7 @@ util$dotprogress <- function(callback, interval=100) {
 # like sapply/lapply except it expects fn() to yield lists.
 # each list gets coerced into a single row of a dataframe.
 
-util$dfapply <- function(collection, fn, t=F) {
+util$dfapply <- function(collection, fn, t=TRUE) {
   r = sapply(collection, fn)
   if (t)  r = base::t(r)
   r = matrix2df(r)
@@ -169,16 +180,21 @@ util$dfagg <- function(d, byvals, fn) {
 }
 
 util$mymerge <- function(x,y, row.x=F,row.y=F, by=NULL, ...) {
-  if (row.x) {
-    x[,by] = row.names(x)
-  }
-  if (row.y) {
-    y[,by] = row.names(y)
-  }
-  
-  merge(x,y,by=by, ...)
-  
+  if (row.x)  x[,by] = row.names(x)
+  if (row.y)  y[,by] = row.names(y)
+
+  ret = merge(x,y,by=by, ...)
+  if (row.x)  row.names(ret) = row.names(x)
+  if (row.y)  row.names(ret) = row.names(y)
+  ret
 }
+
+# util$flipleft <- function(x,newcol, y,key.y=names(y), key.x=row.names(x)) {
+#   right = data.frame(key=key.y)
+#   merged = merge(data.frame(key=key.x, x), data.frame(key=key.y,  value=y), by='key')
+#   merged$value
+#   # merged$value
+# }
 
 util$read.xmlss <- function(f) {
   ## BUG: the xml skips cells sometimes.  tricky to parse, argh
@@ -198,8 +214,6 @@ util$read.xmlss <- function(f) {
   df
 }
 
-util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
-
 ########
 
 # for interactivity...
@@ -217,10 +231,10 @@ util$mate <- function(...) {
 
 # pretty-print as yaml.  intended for rows with big textual cells.
 
-util$ppy <- function(x, column.major=FALSE) {
+util$ppy <- function(x, column.major=FALSE, ...) {
   library(yaml)
-  cat(as.yaml(x, column.major=column.major))
-  cat("\n")
+  cat(as.yaml(x, column.major=column.major), ...)
+  cat("\n", ...)
 }
 
 

@@ -2,9 +2,12 @@
 
 source("~/dlanalysis/util.R")
 
+# if ( ! exists('JOB_INFO'))
+#   JOB_INFO = list()
+
 dlanalysis = new.env()
 
-agg_to_unit <- function(a, by='unit_id',
+dlanalysis$agg_to_unit <- function(a, by='unit_id',
   up_for_vote = names(a)[bgrep("^X\\.",names(a)) & !bgrep("^X\\.amt",names(a))]
   ) {
 
@@ -19,14 +22,51 @@ agg_to_unit <- function(a, by='unit_id',
     }
     ret
   })
+  cat("Need candidates attribute...\n")
+  cat("Need target...\n")
   u
 }
 
-binary_vote <- function(u, thresh=0.5, target='same', total_from=c('same','diff'), bool=FALSE) {
-  bool_vote = u[,target] / apply(u[,total_from], 1, sum)  >  thresh
-  if (bool)  return (bool_vote)
-  fill_bool(bool_vote, target, setdiff(total_from, target)[1])
+dlanalysis$classify_probs <- function(u, target=attr(u,'target'), candidates=attr(u,'candidates')) {
+  u[,target] / apply(u[,candidates], 1, sum)
 }
+
+dlanalysis$binary_vote <- function(u, dec_thresh=0.5, conserv_thresh=0, target=attr(u,'target'), candidates=attr(u,'candidates'), bool=FALSE) {
+  class_probs = classify_probs(u)
+  bool_vote =  class_probs  >=  dec_thresh
+  if (any(class_probs < conserv_thresh, na.rm=T))
+    bool_vote[class_probs < conserv_thresh] = NA
+  if (bool)  return (bool_vote)
+  fill_bool(bool_vote, target, paste(setdiff(candidates, target), collapse='-'))
+}
+
+dlanalysis$accuracy <- function(u, gold=u$gold, target=attr(u,'target'), candidates=attr(u,'candidates'), ...) {
+  correct = binary_vote(u, ...) == gold
+  list(
+    acc    = mean(correct, na.rm=T),
+    prec   = mean(correct[u$gold==target], na.rm=T),
+    recall = mean(correct[u$gold!=target], na.rm=T)
+  )
+}
+
+dlanalysis$pr_curve <- function(u, thresh=seq(0,1,.05), plot=T) {
+  x = dfapply(thresh, function(t) accuracy(u, dec_thresh=t))
+  if (plot) {
+    plot(x$prec, x$recall, type='n')
+    text(x$prec, x$recall, sprintf("%.0f",100*x$acc))
+  }
+  invisible(x)
+}
+
+# dlanalysis$conserve_curve <- function(u, thresh=seq(0,1,.05), plot=T) {
+#   class_probs = classify_probs(u)
+#   x = dfapply(thresh, function(t) {
+#     corrects = class_probs 
+#     list(
+#       num = sum(class_probs >= t),
+#       perc = mean(class_probs >= t),5 
+#   })
+# }
 
 
 # w = data.frame(row.names=names(sort(-table(a$X.amt_worker_ids))))
