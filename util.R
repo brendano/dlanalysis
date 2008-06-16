@@ -30,6 +30,31 @@ util$unwhich <- function(indices, len=length(indices)) {
   ret
 }
 
+util$most_common <- function(x)  names(which.max(table(x, exclude=NULL)))
+
+util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
+  # http://tolstoy.newcastle.edu.au/R/devel/04/11/1469.html
+  out=x
+
+  ystructure = names(c(y,recursive=TRUE))
+  xstructure = names(c(x,recursive=TRUE))
+  yunique = ystructure[! ystructure %in% xstructure]
+
+  ystructure = sapply(ystructure,FUN=function(element)   strsplit(element,"\\."))
+  xstructure = sapply(xstructure,FUN=function(element)   strsplit(element,"\\."))
+  yunique = sapply(yunique,FUN=function(element) strsplit(element,"\\."))
+
+   if (only.new.y) 
+    lapply(yunique, FUN=function(index) out[[index]]<<-y[[index]])
+   else {
+     if (!append) {
+       lapply(ystructure, FUN=function(index) out[[index]]<<-y[[index]])
+     }
+     else lapply(ystructure, FUN=function(index) out[[index]]<<-c(out[[index]],y[[index]]))
+   }
+   return(out)
+}
+
 # util$merge_vec <- function(df, y, by, name) {
 #   right = data.frame(bla=y)
 #   right[[name]] = right$bla
@@ -70,6 +95,9 @@ util$bgrep <- function(pat,x, ...) {
   # so bgrep works in the world of vector ops like ==, %in%, etc.
   unwhich(grep(pat,x,...), length(x))
 }
+
+# "normal" grep: return values, not indices
+util$ngrep <- function(pat,x, ...)  x[grep(pat,x,...)]
 
 util$tapply2 <- function(x, ...) {
   # slightly nicer than tapply for some reason, i dont remember
@@ -159,7 +187,11 @@ util$matrix2df <- function(x) {
 util$dfagg <- function(d, byvals, fn) {
   if (class(byvals) == 'function')
     byvals = byvals(d)
-    
+  if (is.factor(byvals) && !setequal( as.c(unique(byvals)), levels(byvals)) ) {
+    msg("Warning, byvals is a factor but only using only a subset of its levels.  Coercing to character to avoid weirdnesses.  Hopefully this is what you want.")
+    byvals = as.character(byvals)
+  }
+
   b = by(d, byvals, fn)
 
   cols = NULL
@@ -173,7 +205,7 @@ util$dfagg <- function(d, byvals, fn) {
   for (col in cols) {
     ret[,col] = sapply(names(b), function(k) b[[k]][[col]])
   }
-  if(length(cols) == 0) {
+  if (length(cols) == 0) {
     return(sapply(names(b), function(k) b[[k]]))
   }
   ret
@@ -230,11 +262,19 @@ util$mate <- function(...) {
 }
 
 # pretty-print as yaml.  intended for rows with big textual cells.
+# a la mysql's \G operator
 
 util$ppy <- function(x, column.major=FALSE, ...) {
   library(yaml)
   cat(as.yaml(x, column.major=column.major), ...)
   cat("\n", ...)
+}
+
+util$newwin <- function(x) {
+  capture.output(print(x),file="/tmp/tmp.txt")
+  # system("FILE_TO_VIEW=/tmp/tmp.txt /Applications/Utilities/Terminal.app/Contents/MacOS/Terminal /users/brendano/sw/bin/lame_viewer.sh")
+  # system("DISPLAY=:0 /usr/X11R6/bin/xterm -geometry 80x60 -e less /tmp/tmp.txt &")
+  system("mate /tmp/tmp.txt &")
 }
 
 
