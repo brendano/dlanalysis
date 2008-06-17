@@ -1,4 +1,6 @@
-dlanalysis$worker_an <- function(a, pseudocount=1, candidates=levels(a$gold)) {
+dlanalysis$worker_an = mygeneric('worker_an')
+
+dlanalysis$worker_an.categ <- function(a, pseudocount=1, candidates=levels(a$gold)) {
   worker_confusions = by(a,a$X.amt_w,function(x){ table(x[,c('response','gold')]) })
   # print(worker_confusion_counts)   # prints extremely prettily
   
@@ -32,21 +34,23 @@ dlanalysis$confusion_likelihood_name <- function (pred,real, not_rhs=FALSE) {
   paste('p',pred,'|',real,  sep='')
 }
 
-dlanalysis$map_estimate_labels <- function(a,w, candidates=levels(a$gold) ) {
-  label_posteriors = label_posterior_odds_given_worker_model(a,w,candidates=candidates)
-  # i'll show you an a posteriori, bitch
+dlanalysis$map_estimate_labels <- function(a,w, candidates=a@candidates ) {
+  label_posteriors = posterior_given_workers(a,w,candidates=candidates)
+  # i'll show *you* a posteriori
   apply(label_posteriors, 1, function(row) { candidates[which.max(row)] })
 }
 
-dlanalysis$label_posterior_odds_given_worker_model <- function(a, w, 
-    candidates=levels(a$gold), 
-    label_priors=sapply(candidates, function(x) {p=1/length(candidates); p/(1-p)})
+dlanalysis$posterior_given_workers = mygeneric('posterior_given_workers')
+
+dlanalysis$posterior_given_workers.categ <- function(a, w, 
+    candidates=a@candidates,
+    label_priors=sapply(candidates, function(x) p2o( 1/length(candidates) ))
 ) {
   # only use a$X.amt_worker_id and a$response.
   # print(candidates)
   # print(label_priors)
   join = mymerge(a, w, by='X.amt_worker_ids', row.y=TRUE)
-  dfagg(join, join$orig_id, dotprogress(function(x) {
+  post_odds = dfagg(join, join$orig_id, dotprogress(function(x) {
     odds_per_label = lapply(candidates, function(label) {
       # print(label)
       signal_lratios = sapply(1:nrow(x), function(i)
@@ -56,11 +60,12 @@ dlanalysis$label_posterior_odds_given_worker_model <- function(a, w,
       prod(signal_lratios)  *  label_priors[label]
     })
     names(odds_per_label) = candidates
-    opl<<-odds_per_label
+    # opl<<-odds_per_label
     # print(odds_per_label)
     odds_per_label
   }, interval=10))
-  
+  cat("\n")
+  post_odds
 }
 
 

@@ -164,6 +164,7 @@ util$dfapply <- function(collection, fn, t=TRUE) {
   r = sapply(collection, fn)
   if (t)  r = base::t(r)
   r = matrix2df(r)
+  row.names(r) = collection
   r
 }
 

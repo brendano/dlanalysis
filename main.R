@@ -9,16 +9,40 @@ dlanalysis = new.env()
 source("~/dlanalysis/workers.R")
 source("~/dlanalysis/xval.R")
 
-dlanalysis$agg_to_unit_rion_categ <- function(a,
-    response = as.factor(a$response),
+dlanalysis$load_categ_anno <- function(filename) {
+  a = read.delim(filename,sep="\t",colClasses=list(response='factor',gold='factor'))
+  attr(a,'data_type') = 'categ'
+  if ( ! setequal(levels(a$responsee), levels(a$factor)))
+    stop("Uhoh, levels of response and gold are not the same.  need to hack up this code here")
+  # a$response <<- as.factor(a$response, levels=BLA)
+  # a$gold     <<- as.factor(a$gold, levels=BLA)
+  attr(a,'candidates') = levels(a$response)
+  attr(a,'target') = tail(candidates, 1)
+  msg("Candidates: ",a@candidates)
+  msg("Target: ",a@target)
+  a
+}
+
+dlanalysis$anno_subset <- function(a, limit=Inf, stochastic=FALSE) {
+  subset_fn = if ( !stochastic ) function(x) head(x, limit)
+              else stop("oops")
+  ret = data.frame()
+  for (oid in unique(a$orig_id)) {
+    ret = rbind(ret, a[ subset_fn(which(a$orig_id==oid)) , ])
+  }
+  ret
+  # dfagg(a, a$orig_id, subset_fn)
+}
+
+dlanalysis$agg_to_unit = mygeneric('agg_to_unit')
+
+dlanalysis$agg_to_unit.categ <- function(a,
     by = 'orig_id',
-    gold = as.factor(a$gold),
+    limit=Inf,
     candidates = union(levels(response), levels(gold))
   ) {
-  a$response = response   # doesn't leak out of this scope.  crazy eh?!
-  a$gold = gold
-
   u = dfagg(a, a[,by], function(x) {
+    x = head(x,limit)
     ret = list()
     # winner = names(which.max(table( x[,attr] )))
     # ret[[paste(attr,'decision',sep='_')]] = winner
@@ -32,11 +56,9 @@ dlanalysis$agg_to_unit_rion_categ <- function(a,
     ret[['gold']] = names(t)
     ret
   })
-  attr(u,'candidates') = candidates
-  # may have to override
-  attr(u,'target') = tail(candidates, 1)
-  msg("Candidates: ",u@candidates)
-  msg("Target: ",u@target)
+  attr(u,'candidates') = a@candidates
+  attr(u,'target') = a@target
+  attr(u,'data_type') = 'categ'
   u  
 }
 
@@ -326,8 +348,17 @@ dlanalysis$plot_thresh_cost <- function(rocr_pred, cost_ratios=c(1,2,5,10,20)) {
 
 dlanalysis$assert_golds <- function(ug)  stopifnot( all(!is.na(ug$gold)) )
 
+dlanalysis$ta_at_thresh <- function(ta, thresh=0.5) {
+  # like ta[ta$thresh==thresh,]  ... except tolerant for weirdness  
+  # ta[ which.min(abs(ta$thresh - thresh)), ]
+  
+  distances = ta$thresh - thresh
+  distances[distances<0] = -Inf
+  ta[ which.min(abs(distances)), ]
+}
+
 dlanalysis$plot_vertical_thresh <- function(ug, p_tol=.01, r_tol=.01,
-  use_acc=TRUE, use_prec=TRUE, use_rec=TRUE, 
+  use_acc=TRUE, use_prec=TRUE, use_rec=TRUE,
   conf = classify_probs(u),
   # conf = if (!is.null(ug$conf)) ug$conf else (ug[,target] / apply(ug[,ug@candidates], 1, sum)),
   # conf = ug$conf,
@@ -345,11 +376,10 @@ dlanalysis$plot_vertical_thresh <- function(ug, p_tol=.01, r_tol=.01,
     # ips$prec = list(sprintf("Best >%.0f%% precision: ",100*(1-p_tol)), good_prec)
     ips$prec = list("High precision:", good_prec)
   }
-  print(ips)
   if (use_rec) {
     z = ta$rec >= (1-r_tol)   # region
     good_rec  = ta$thresh[z][ which.max(ta$acc[z]) ]
-    ips$rec = list(sprintf("Best >%.0f%% recall: ",100*(1-r_tol)), good_rec)
+    # ips$rec = list(sprintf("Best >%.0f%% recall: ",100*(1-r_tol)), good_rec)
     ips$rec = list("High recall:", good_rec)
   }
   plot_vertical_thresh2(ug, ips, conf=conf, ...)
@@ -358,7 +388,8 @@ dlanalysis$plot_vertical_thresh <- function(ug, p_tol=.01, r_tol=.01,
 dlanalysis$plot_vertical_thresh2 <- function(ug, 
   interesting_points=list(list("Lame middle threshold",.5)), 
   target=ug@target,
-  conf=ug$conf,
+  # conf=ug$conf,
+  conf=classify_probs(ug),
 
   main="Test set separation by binary classifier",
   sub="Above a threshold, classified as Y, below as N
@@ -418,6 +449,24 @@ Dots have horizontal jitter (x-axis has no meaning)",
     if (length(pair[[2]])==0) next
     stuff(pair[[2]], pair[[1]])
   }
+}
+
+
+
+# i'm sure s3 has a way to do this but i cant figure it out.  (briefly tried
+# subclassing by making class() a vector, but couldnt figure out how to accept
+# more than 1 arg.  yes i'm sure i'm dumb.)  but, easier to make my own!
+dlanalysis$mygeneric <- function(orig_fname) {
+  return(function(arg1, ...) {
+    if ( is.null(attr(arg1,'data_type')) )
+      stop("Error, need a 'data_type' attribute on first arg")
+    fname = paste(orig_fname,arg1@data_type, sep='.')
+    fn = dlanalysis[[fname]]
+    if ( is.null(fn) ) {
+      stop("Error, couldn't find a function named ", fname)
+    }
+    fn(arg1, ...)
+  })
 }
 
 while("dlanalysis" %in% search())
