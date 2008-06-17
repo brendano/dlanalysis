@@ -6,8 +6,41 @@ source("~/dlanalysis/util.R")
 #   JOB_INFO = list()
 
 dlanalysis = new.env()
+source("~/dlanalysis/workers.R")
+source("~/dlanalysis/xval.R")
 
-dlanalysis$agg_to_unit <- function(a, by='unit_id',
+dlanalysis$agg_to_unit_rion_categ <- function(a,
+    response = as.factor(a$response),
+    by = 'orig_id',
+    gold = as.factor(a$gold),
+    candidates = union(levels(response), levels(gold))
+  ) {
+  a$response = response   # doesn't leak out of this scope.  crazy eh?!
+  a$gold = gold
+
+  u = dfagg(a, a[,by], function(x) {
+    ret = list()
+    # winner = names(which.max(table( x[,attr] )))
+    # ret[[paste(attr,'decision',sep='_')]] = winner
+    p = table(x$response) / nrow(x)
+    ret[['entropy']] = sum(-p * log(p), na.rm=TRUE)
+    ret = c(ret, table(x$response))
+    ret[['plurality']] = most_common(x$response)
+    t = table(x$gold, exclude=NULL)
+    t = t[t>0]
+    if (length(t) > 1)  stop("uhoh bad gold anno set")
+    ret[['gold']] = names(t)
+    ret
+  })
+  attr(u,'candidates') = candidates
+  # may have to override
+  attr(u,'target') = tail(candidates, 1)
+  msg("Candidates: ",u@candidates)
+  msg("Target: ",u@target)
+  u  
+}
+
+dlanalysis$agg_to_unit_old1 <- function(a, by='unit_id',
   up_for_vote = names(a)[bgrep("^X\\.",names(a)) & !bgrep("^X\\.amt",names(a))]
   ) {
 
@@ -89,17 +122,31 @@ dlanalysis$pr_curve <- function(u, thresh=seq(0,1,.05), plot=T, plot.counts=F) {
   x
 }
 
-dlanalysis$rocr <- function(ug, measure='acc', x.measure='cutoff', target=ug@target) {
+dlanalysis$rocr <- function(ug, measure='acc', x.measure='cutoff', conf=NULL, gold=ug$gold, target=ug@target) {
   stopifnot( all(!is.na(ug$gold)) )
   library(ROCR)
-  pred = prediction(classify_probs(ug), ug$gold, label.ordering=c(setdiff(ug@candidates,target), target ))
+  
+  if (is.null(conf))
+    conf = classify_probs(ug)
+  
+  if (length(ug@candidates) == 2) {
+    cands = ug@candidates
+  } else {
+    gold = rep(NA, nrow(ug))
+    gold[ug$gold==target] = target
+    no_label = if (target != "no") "no" else "off"
+    gold[ug$gold!=target] = no_label
+    cands = c(no_label, target)
+  }    
+  
+  pred = prediction(conf, gold, label.ordering=c(setdiff(cands,target), target))
   perf = performance(pred, measure, x.measure)
   list(pred=pred, perf=perf)
 }
 
-dlanalysis$thresh_analysis <- function(u, num_thresh=sum(!is.na(u$gold)), target=u@target) {
+dlanalysis$thresh_analysis <- function(u, num_thresh=sum(!is.na(u$gold)), conf=NULL, target=u@target) {
   ug = u[ !is.na(u$gold), ]
-  r = rocr(ug,'acc')
+  r = rocr(ug,'acc', conf=conf)
   cutoffs = r$pred@cutoffs[[1]]
   cutoff_inds = unique(floor(seq(1, length(cutoffs), length.out=num_thresh)))
   # cutoff_inds = sapply(thresh, function(t) {
@@ -280,79 +327,95 @@ dlanalysis$plot_thresh_cost <- function(rocr_pred, cost_ratios=c(1,2,5,10,20)) {
 dlanalysis$assert_golds <- function(ug)  stopifnot( all(!is.na(ug$gold)) )
 
 dlanalysis$plot_vertical_thresh <- function(ug, p_tol=.01, r_tol=.01,
-  use_acc=TRUE, use_prec=TRUE, use_rec=TRUE,
+  use_acc=TRUE, use_prec=TRUE, use_rec=TRUE, 
+  conf = classify_probs(u),
+  # conf = if (!is.null(ug$conf)) ug$conf else (ug[,target] / apply(ug[,ug@candidates], 1, sum)),
+  # conf = ug$conf,
    ...) {
   # select interesting points
-  ta = thresh_analysis(ug)
+  ta = thresh_analysis(ug, conf=conf)
   ips = list()
-  if (use_acc) { 
+  if (use_acc) {
     best_acc = ta$thresh[ which.max(ta$acc) ]
     ips$acc = list("Best accuracy:",best_acc)
   }
   if (use_prec) {
-    
     z = ta$prec >= (1-p_tol)   # region
     good_prec = ta$thresh[z][ which.max(ta$acc[z]) ]
     # ips$prec = list(sprintf("Best >%.0f%% precision: ",100*(1-p_tol)), good_prec)
     ips$prec = list("High precision:", good_prec)
   }
+  print(ips)
   if (use_rec) {
     z = ta$rec >= (1-r_tol)   # region
     good_rec  = ta$thresh[z][ which.max(ta$acc[z]) ]
     ips$rec = list(sprintf("Best >%.0f%% recall: ",100*(1-r_tol)), good_rec)
     ips$rec = list("High recall:", good_rec)
   }
-  plot_vertical_thresh2(ug, ips, ...)
+  plot_vertical_thresh2(ug, ips, conf=conf, ...)
 }
 
 dlanalysis$plot_vertical_thresh2 <- function(ug, 
   interesting_points=list(list("Lame middle threshold",.5)), 
-  conf=ug$conf, target=ug@target,
+  target=ug@target,
+  conf=ug$conf,
+
   main="Test set separation by binary classifier",
   sub="Above a threshold, classified as Y, below as N
 Errors above are false pos; errors below are false neg
 Accuracy, Precision, Recall in %
 Dots have horizontal jitter (x-axis has no meaning)",
   ylab="Confidence level (% of Turker vote for YES)",
-  legend.x="bottomright", legend.inset=1
+  legend.x="bottomright", legend.inset=1,
+  ylim=c(0,1), ylim_auto=FALSE
 ) {
   assert_golds(ug)
   plot.new()
-  plot.window(ylim=c(0,1),xlim=c(0,1))
+  if (ylim_auto) {
+    conf2 = conf[conf<Inf & conf>-Inf]
+    spacer = sd(conf2) / 5
+    ylim = c(min(conf2)-spacer, max(conf2)+spacer)
+  }
+  plot.window(ylim=ylim,xlim=c(0,1))
   axis(2,at=seq(0,1,.1),ylab='asfdafsd')
   title(main=main,sub=sub,ylab=ylab)
 
   j = jitter(rep(.1,nrow(ug)),50)
   j = j-min(j) + .037
-  
+
   colors = list(y='blue', n='red')
   x = ug$gold==target
-  points(j[x], ug[x,]$conf, col=colors$y)
+  points(j[x], conf[x], col=colors$y)
   x = ug$gold!=target
-  points(j[x], ug[x,]$conf, col=colors$n)
+  points(j[x], conf[x], col=colors$n)
   
   legend(legend.x, legend=c("YES label","NO label"), fill=c(colors$y,colors$n), title="Gold standard's labels:", inset=legend.inset)
   
   prec <- function(thresh) {
-    mean(ug[conf>=thresh,'gold']==target)
+    mean(ug[conf>=thresh,'gold']==target, na.rm=T)
   }
   rec <- function(thresh) {
-    tp = sum(ug[conf>=thresh,'gold']==target)
-    fn = sum(ug[conf< thresh,'gold']==target)
+    tp = sum(ug[conf>=thresh,'gold']==target, na.rm=T)
+    fn = sum(ug[conf< thresh,'gold']==target, na.rm=T)
     tp / (tp+fn)
   }
   acc <- function(thresh) {
-    mean((ug$conf>=thresh) == (ug$gold==target))
+    mean((conf>=thresh) == (ug$gold==target), na.rm=T)
   }
   msg <- function(t) sprintf("thresh=%.1f\nA %.0f, P %.0f, R %.0f",
           100*t, 100*acc(t), 100*prec(t), 100*rec(t))
   # myarrow <- function(t) arrows(.2,t, .12,t, .1)
-  myarrow <- function(t) lines(c(-.02,.3),c(t,t))
+  myarrow <- function(t) { lines(c(-.02,.3), c(t,t)) }
   stuff <- function(t,m) {
+    t_txt = t
+    t = min(t, max(conf))
+    t = max(t, min(conf))          
+    text(.32,t, paste(m,msg(t_txt)), adj=0)
+
     myarrow(t)
-    text(.32,t, paste(m,msg(t)), adj=0)
   }
   for (pair in interesting_points) {
+    if (length(pair[[2]])==0) next
     stuff(pair[[2]], pair[[1]])
   }
 }

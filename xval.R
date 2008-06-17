@@ -1,4 +1,4 @@
-xval <- function(d, k, model_fn, ...) {
+dlanalysis$xval <- function(d, k, model_fn, ...) {
   folds = rep(1:k, nrow(d)/5 + 5)[1:nrow(d)]
   pred = rep(NA, nrow(d))
   for (fold in 1:k) {

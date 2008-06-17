@@ -1,4 +1,5 @@
 options(showWarnCalls=T, showErrorCalls=T)
+# mac specific?
 if (system("stty -a &>/dev/null") == 0)
   options(width= as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1])) - 1 )
 
@@ -31,6 +32,9 @@ util$unwhich <- function(indices, len=length(indices)) {
 }
 
 util$most_common <- function(x)  names(which.max(table(x, exclude=NULL)))
+
+util$p2o <- function(p)  p / (1-p)    # probability -> odds ratio
+util$o2p <- function(o)  o / (1+o)    # odds ratio  -> probability
 
 util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
   # http://tolstoy.newcastle.edu.au/R/devel/04/11/1469.html
@@ -216,8 +220,8 @@ util$mymerge <- function(x,y, row.x=F,row.y=F, by=NULL, ...) {
   if (row.y)  y[,by] = row.names(y)
 
   ret = merge(x,y,by=by, ...)
-  if (row.x)  row.names(ret) = row.names(x)
-  if (row.y)  row.names(ret) = row.names(y)
+  if (row.x && nrow(ret)==nrow(x))  row.names(ret) = row.names(x)
+  if (row.y && nrow(ret)==nrow(y))  row.names(ret) = row.names(y)
   ret
 }
 
