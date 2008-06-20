@@ -24,8 +24,6 @@ dlanalysis$mygeneric <- function(orig_fname) {
 }
 
 source("~/dlanalysis/workers.R")
-source("~/dlanalysis/xval.R")
-
 
 dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
   a = read.delim(filename, colClasses=list(response='factor',gold='factor',orig_id='factor'), sep=sep, ...)
@@ -51,6 +49,47 @@ dlanalysis$anno_subset <- function(a, limit=Inf, stochastic=FALSE) {
   ret
   # dfagg(a, a$orig_id, subset_fn)
 }
+
+dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
+  per_unit_inds = rep(1, length(present_levels(a$orig_id)))
+  mat = matrix(NA, length(per_unit_inds), limit+1)
+  row.names(mat) = present_levels(unique(a$orig_id))
+  names(per_unit_inds) = present_levels(unique(a$orig_id))
+  
+  worker_random_order = shuffle(unique(a$X.amt_worker_ids))
+  # worker_random_order = c('sparseman','dumb1','dumb2')
+  
+  for (worker in as.c(worker_random_order)) {
+    units_worker_did = unique(a$orig_id[a$X.amt_worker_ids==worker])
+    for (uname in units_worker_did) {
+      mat[uname, per_unit_inds[uname]] = worker
+    }
+    
+    per_unit_inds[units_worker_did] = per_unit_inds[units_worker_did] + 1
+    per_unit_inds[per_unit_inds > limit] = limit+1
+    if (all(per_unit_inds>limit)) break
+  }
+  mat = mat[,1:limit]
+  
+  
+  # dfagg(a, a$orig_id, function(x) {
+  #   x[x$X.amt_worker_id %in% mat[x$orig_id[1],], ]
+  # })
+
+  ret = data.frame()
+  for (uname in present_levels(a$orig_id)) {
+    ret = rbind(ret, 
+      a[a$orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,], ]
+      )
+  }
+  ret$X.amt_worker_ids = trim_levels(ret$X.amt_worker_ids)
+  ret
+  # lapply(present_levels(a$orig_id), function(uname) {
+  #   a[a$orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,], ]
+  # })
+
+}
+
 
 dlanalysis$agg_to_unit = dlanalysis$mygeneric('agg_to_unit')
 

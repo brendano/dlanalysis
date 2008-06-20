@@ -58,10 +58,10 @@ dumb2 u1 0
 
 dumb1 u2 1
 dumb2 u2 0
-dumb1 u3 1
-dumb2 u3 0
-dumb1 u4 1
-dumb2 u4 0
+# dumb1 u3 1
+# dumb2 u3 0
+# dumb1 u4 1
+# dumb2 u4 0
 EOF
 "), sep=" ", comment.char='#')
 

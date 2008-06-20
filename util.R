@@ -33,6 +33,12 @@ util$unwhich <- function(indices, len=length(indices)) {
   ret
 }
 
+util$shuffle <- function(x)  x[order(runif(length(x)))]
+
+util$present_levels <- function(x) intersect(levels(x), x)
+
+util$trim_levels <- function(x)  factor(x, levels=present_levels(x))
+
 util$fair_gt <- function(x,y) {
   # breaks ties arbitrarily.  # of TRUE's should be halfway between > and >=.
   
@@ -271,20 +277,31 @@ util$list2df <- function(ls) {
   ret
 }
 
-util$mymerge <- function(x,y, row.x=F,row.y=F, by=NULL, ...) {
+util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, sort=FALSE, ...) {
   if (row.x)  x[,by] = row.names(x)
   if (row.y)  y[,by] = row.names(y)
 
-  ret = merge(x,y,by=by, ...)
+  ret = merge(x,y,by=by, suffixes=c('','.y'), sort=sort, ...)
   if (row.x && nrow(ret)==nrow(x))  row.names(ret) = row.names(x)
   if (row.y && nrow(ret)==nrow(y))  row.names(ret) = row.names(y)
+  
+  print(names(x))
+  print(names(ret))
+  print(c(names(x),keep.y))
+  ret<<-ret
+  if (!is.null(keep.y))
+    ret = ret[ ,c(names(x),keep.y) ]
   ret
 }
 
 util$flipleft <- function(x,named_vec, by) {
-  if (is.null(names(named_vec))) stop("rhs must be named")
+  if (is.null(names(named_vec)))
+    names(named_vec) = levels(x[,by])  # erm.  tricky.
   y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
-  merged = mymerge(x,y, row.y=T, by=by)
+  merged = mymerge(x,y, row.y=T, by=by, all.x=T, all.y=F, sort=FALSE)
+  merged<<-merged
+  # stopifnot(all( row.names(merged) == row.names(x) ))
+  stopifnot(all( merged$X.amt_anno == x$X.amt_anno ))
   merged$ze_y_value
 }
 
