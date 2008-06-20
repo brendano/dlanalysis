@@ -6,18 +6,36 @@ source("~/dlanalysis/util.R")
 #   JOB_INFO = list()
 
 dlanalysis = new.env()
+
+# i'm sure s3 has a way to do this but i cant figure it out.  (briefly tried
+# subclassing by making class() a vector, but couldnt figure out how to accept
+# more than 1 arg.  yes i'm sure i'm dumb.)  but, easier to make my own!
+dlanalysis$mygeneric <- function(orig_fname) {
+  return(function(arg1, ...) {
+    if ( is.null(attr(arg1,'data_type')) )
+      stop("Error, need a 'data_type' attribute on first arg")
+    fname = paste(orig_fname,arg1@data_type, sep='.')
+    fn = dlanalysis[[fname]]
+    if ( is.null(fn) ) {
+      stop("Error, couldn't find a function named ", fname)
+    }
+    fn(arg1, ...)
+  })
+}
+
 source("~/dlanalysis/workers.R")
 source("~/dlanalysis/xval.R")
 
-dlanalysis$load_categ_anno <- function(filename) {
-  a = read.delim(filename,sep="\t",colClasses=list(response='factor',gold='factor'))
+
+dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
+  a = read.delim(filename, colClasses=list(response='factor',gold='factor',orig_id='factor'), sep=sep, ...)
   attr(a,'data_type') = 'categ'
   if ( ! setequal(levels(a$responsee), levels(a$factor)))
     stop("Uhoh, levels of response and gold are not the same.  need to hack up this code here")
   # a$response <<- as.factor(a$response, levels=BLA)
   # a$gold     <<- as.factor(a$gold, levels=BLA)
   attr(a,'candidates') = levels(a$response)
-  attr(a,'target') = tail(candidates, 1)
+  attr(a,'target') = tail(a@candidates, 1)
   msg("Candidates: ",a@candidates)
   msg("Target: ",a@target)
   a
@@ -27,19 +45,19 @@ dlanalysis$anno_subset <- function(a, limit=Inf, stochastic=FALSE) {
   subset_fn = if ( !stochastic ) function(x) head(x, limit)
               else stop("oops")
   ret = data.frame()
-  for (oid in unique(a$orig_id)) {
+  for (oid in levels(a$orig_id)) {
     ret = rbind(ret, a[ subset_fn(which(a$orig_id==oid)) , ])
   }
   ret
   # dfagg(a, a$orig_id, subset_fn)
 }
 
-dlanalysis$agg_to_unit = mygeneric('agg_to_unit')
+dlanalysis$agg_to_unit = dlanalysis$mygeneric('agg_to_unit')
 
 dlanalysis$agg_to_unit.categ <- function(a,
     by = 'orig_id',
     limit=Inf,
-    candidates = union(levels(response), levels(gold))
+    candidates = a@candidiates
   ) {
   u = dfagg(a, a[,by], function(x) {
     x = head(x,limit)
@@ -89,59 +107,6 @@ dlanalysis$agg_to_unit_old1 <- function(a, by='unit_id',
 
 dlanalysis$classify_probs <- function(u, target=u@target, candidates=u@candidates) {
   u[,target] / apply(u[,candidates], 1, sum)
-}
-
-dlanalysis$binary_vote <- function(u, thresh=0.5, 
-  # conserve_thresh=0, 
-  target=attr(u,'target'), candidates=attr(u,'candidates'), bool=FALSE) {
-    
-  class_probs = classify_probs(u)
-  bool_vote =  class_probs  >=  thresh
-  # if (any(class_probs < conserve_thresh, na.rm=T))
-  #   bool_vote[class_probs < conserve_thresh] = NA
-  if (bool)  return (bool_vote)
-  fill_bool(bool_vote, target, paste(setdiff(candidates, target), collapse='-'))
-}
-
-# TODO -- all threshold vs accuracy analysis should be redone on top of the ROCR package
-# this was going in that direction, but ROCR is so much better
-
-dlanalysis$accuracy <- function(u, gold=u$gold, target=attr(u,'target'), candidates=attr(u,'candidates'), ...) {
-  decisions = binary_vote(u, ...)
-  correct = decisions == gold
-  x = list(
-    acc = mean(correct, na.rm=T),
-    # num = sum( !is.na(decisions) ),
-    acc_count    = sum(correct, na.rm=T),
-    true_pos  = sum(decisions==target & correct, na.rm=T),
-    false_pos = sum(decisions==target & !correct, na.rm=T),
-    true_neg  = sum(decisions!=target & correct, na.rm=T),
-    false_neg = sum(decisions!=target & !correct, na.rm=T)
-  )
-  # summary stats of the confusion matrix!  fun fun!
-  # see infobox on en.wikipedia.org/wiki/Receiver_operating_characteristic
-  x$prec   = x$true_pos / (x$true_pos + x$false_pos)
-  x$recall = x$true_pos / (x$true_pos + x$false_neg)
-  # x$spec   = x$true_neg / (x$false_pos + x$true_neg)
-  # x$fallout= 1 - x$spec
-  x
-}
-
-dlanalysis$pr_curve <- function(u, thresh=seq(0,1,.05), plot=T, plot.counts=F) {
-  x = dfapply(thresh, function(t) accuracy(u, thresh=t))
-  if (plot) {
-    if (plot.counts) {
-      target = attr(u,'target')
-      prec_upper = sum(u$gold==target, na.rm=T)
-      recall_upper = sum(u$gold!=target, na.rm=T)
-      plot(x$prec_count, x$recall_count, type='o', xlim=c(0,prec_upper), ylim=c(0,recall_upper))
-    } else {
-      plot(x$prec, x$recall, type='o', xlim=c(0,1), ylim=c(0,1))
-      # text(x$prec, x$recall, sprintf("%.0f",100*x$acc))
-    }
-  }
-  x$thresh = thresh
-  x
 }
 
 dlanalysis$rocr <- function(ug, measure='acc', x.measure='cutoff', conf=NULL, gold=ug$gold, target=ug@target) {
@@ -423,15 +388,15 @@ Dots have horizontal jitter (x-axis has no meaning)",
   legend(legend.x, legend=c("YES label","NO label"), fill=c(colors$y,colors$n), title="Gold standard's labels:", inset=legend.inset)
   
   prec <- function(thresh) {
-    mean(ug[conf>=thresh,'gold']==target, na.rm=T)
+    mean(ug[fair_gt(conf,thresh),'gold']==target, na.rm=T)
   }
   rec <- function(thresh) {
-    tp = sum(ug[conf>=thresh,'gold']==target, na.rm=T)
-    fn = sum(ug[conf< thresh,'gold']==target, na.rm=T)
+    tp = sum(ug[fair_gt(conf,thresh),'gold']==target, na.rm=T)
+    fn = sum(ug[fair_lt(conf,thresh),'gold']==target, na.rm=T)
     tp / (tp+fn)
   }
   acc <- function(thresh) {
-    mean((conf>=thresh) == (ug$gold==target), na.rm=T)
+    mean((fair_gt(conf,thresh)) == (ug$gold==target), na.rm=T)
   }
   msg <- function(t) sprintf("thresh=%.1f\nA %.0f, P %.0f, R %.0f",
           100*t, 100*acc(t), 100*prec(t), 100*rec(t))
@@ -452,22 +417,6 @@ Dots have horizontal jitter (x-axis has no meaning)",
 }
 
 
-
-# i'm sure s3 has a way to do this but i cant figure it out.  (briefly tried
-# subclassing by making class() a vector, but couldnt figure out how to accept
-# more than 1 arg.  yes i'm sure i'm dumb.)  but, easier to make my own!
-dlanalysis$mygeneric <- function(orig_fname) {
-  return(function(arg1, ...) {
-    if ( is.null(attr(arg1,'data_type')) )
-      stop("Error, need a 'data_type' attribute on first arg")
-    fname = paste(orig_fname,arg1@data_type, sep='.')
-    fn = dlanalysis[[fname]]
-    if ( is.null(fn) ) {
-      stop("Error, couldn't find a function named ", fname)
-    }
-    fn(arg1, ...)
-  })
-}
 
 while("dlanalysis" %in% search())
   detach("dlanalysis")

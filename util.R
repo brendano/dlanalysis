@@ -21,6 +21,8 @@ util$strstrip <- function(s)  gsub("^\\s*|\\s*$", "", s)
 
 util$is_empty <- function(collection)  length(collection) == 0
 
+util$last <- function(x)  tail(x, 1)
+
 util$as.c <- as.character
 
 util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
@@ -31,10 +33,43 @@ util$unwhich <- function(indices, len=length(indices)) {
   ret
 }
 
+util$fair_gt <- function(x,y) {
+  # breaks ties arbitrarily.  # of TRUE's should be halfway between > and >=.
+  
+  ret = rep(NA, length(x))
+  ret[x > y] = TRUE
+  ret[x < y] = FALSE
+  # which filler order?  should randomly chooise either c(T,F) vs c(F,T) as the
+  # seed (or a random permutation of 50/50 distribution on the whole length),
+  # but not clear how to stably but arbitrarily choose one...  hash the bitmap
+  # of the concatenation of x and y perhaps.  don't know how to do in highlevel R.
+  filler_length = length(which(x==y))
+  filler = rep(c(TRUE,FALSE), ceiling(filler_length/2) )[1:filler_length]
+  ret[which(x == y)] = filler
+  ret
+}
+
+util$fair_lt <- function(x,y)  ! fair_gt(x,y)
+
+util$rand_gt <- function(x,y) {
+  # breaks ties randomly.
+  ret = rep(NA, length(x))
+  ret[x > y] = TRUE
+  ret[x < y] = FALSE
+  filler_length = length(which(x==y))
+  filler = as.logical(rbern(filler_length))
+  ret[which(x == y)] = filler
+  ret
+}
+
+util$rand_lt <- function(x,y)  ! rand_gt(x,y)
+
 util$most_common <- function(x)  names(which.max(table(x, exclude=NULL)))
 
 util$p2o <- function(p)  p / (1-p)    # probability -> odds ratio
 util$o2p <- function(o)  o / (1+o)    # odds ratio  -> probability
+util$lo2p <-function(lo) o2p(2^lo)
+util$p2lo <-function(p) log2(p2o(p))
 
 util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
   # http://tolstoy.newcastle.edu.au/R/devel/04/11/1469.html
@@ -198,7 +233,27 @@ util$dfagg <- function(d, byvals, fn) {
   }
 
   b = by(d, byvals, fn)
+  list2df(b)
 
+  # cols = NULL
+  # for (i in 1:min(100,length(b))) {
+  #   cols = c(cols, names(b[[i]]))
+  # }
+  # cols = unique(cols)
+  # 
+  # ret = data.frame(row.names=names(b))
+  # 
+  # for (col in cols) {
+  #   ret[,col] = sapply(names(b), function(k) b[[k]][[col]])
+  # }
+  # if (length(cols) == 0) {
+  #   return(sapply(names(b), function(k) b[[k]]))
+  # }
+  # ret
+}
+
+util$list2df <- function(ls) {
+  b=ls
   cols = NULL
   for (i in 1:min(100,length(b))) {
     cols = c(cols, names(b[[i]]))
@@ -226,12 +281,12 @@ util$mymerge <- function(x,y, row.x=F,row.y=F, by=NULL, ...) {
   ret
 }
 
-# util$flipleft <- function(x,newcol, y,key.y=names(y), key.x=row.names(x)) {
-#   right = data.frame(key=key.y)
-#   merged = merge(data.frame(key=key.x, x), data.frame(key=key.y,  value=y), by='key')
-#   merged$value
-#   # merged$value
-# }
+util$flipleft <- function(x,named_vec, by) {
+  if (is.null(names(named_vec))) stop("rhs must be named")
+  y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
+  merged = mymerge(x,y, row.y=T, by=by)
+  merged$ze_y_value
+}
 
 util$read.xmlss <- function(f) {
   ## BUG: the xml skips cells sometimes.  tricky to parse, argh

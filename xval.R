@@ -1,3 +1,4 @@
+# maybe use http://rweb.stat.umn.edu/R/library/bootstrap/html/crossval.html instead
 dlanalysis$xval <- function(d, k, model_fn, ...) {
   folds = rep(1:k, nrow(d)/k + k)[1:nrow(d)]
   pred = rep(NA, nrow(d))
