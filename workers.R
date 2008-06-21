@@ -1,47 +1,71 @@
 dlanalysis$worker_an = dlanalysis$mygeneric('worker_an')
 
-dlanalysis$worker_an.categ <- function(a, labels=NULL, pseudocount=1,
-  # pseudocount_diag=5, pseudocount_offdiag=1,
-  pseudocounts=NULL,
+dlanalysis$worker_an.categ <- function(a, labels=NULL, 
+  pseudocount=NULL, pseudocounts=NULL,
+  pseudocount_diag=8, pseudocount_offdiag=2,
+  trim_workers=TRUE, trim_units=TRUE,
   labels_long=a$gold, count_thresh=0, head_thresh=0, worker_restrict_list=NULL,
   candidates=a@candidates,
   positive_hack=FALSE, restrict_hack_to_workers=NULL,
   target_only=FALSE, diag_only=FALSE, counts=FALSE, lrs=FALSE, llrs=TRUE, probs=FALSE) {
-  worker_ids = as.c(a$X.amt_w)
+  
+  worker_ids = a$X.amt_worker_ids 
+  if (trim_workers)  worker_ids = trim_levels(worker_ids)
+  if (trim_units)  a$orig_id = trim_levels(a$orig_id)
   
   # msg("LABELS");  print(labels)
   if ( !is.null(labels) ) {
+    if (length(labels) != length(levels(a$orig_id))) stop("uhoh")
     a$label = flipleft(a,labels, 'orig_id')
   } else if (!is.null(labels_long)) {
     a$label = labels_long
   } else stop("need labels somehow")
   
   if (is.null(pseudocounts)) {
-    pseudocounts = matrix(pseudocount, nrow=length(candidates), ncol=length(candidates))
+    if (is.null(pseudocount)) {
+      pseudocounts = matrix(pseudocount_offdiag/(length(candidates)-1), nrow=length(candidates), ncol=length(candidates))
+      diag(pseudocounts) = pseudocount_diag
+    } else {
+      pseudocounts = matrix(pseudocount, nrow=length(candidates), ncol=length(candidates))
+    }
   }
   if (is.null(dimnames(pseudocounts))) {
     dimnames(pseudocounts) = list(candidates, candidates)
   }
 
   worker_confusions = by(a, worker_ids, function(x){ table(x[,c('response','label')]) })
-
+  
+  zero_table = matrix(0, length(candidates),length(candidates), dimnames=list(response=candidates,label=candidates))
+  
   if (head_thresh > 0) {
-    j_mass=cumsum(sort(table(a$X.amt_w),decreasing=T))
+    j_mass = cumsum(sort(table(a$X.amt_w),decreasing=T))
     top_mass = j_mass[j_mass < head_thresh * nrow(a)]
     worker_restrict_list = names(top_mass)
   }
+  
+  for (worker in levels(worker_ids)) {
+    if (is.null(worker_confusions[[worker]])) {
+      worker_confusions[[worker]] = zero_table
+    }
+  }
+  
+  # wc<<-worker_confusions
+  
+  # print(worker_confusions)
   if (!is.null(worker_restrict_list)) {
     # mask = names(worker_confusions) != worker_restrict_list
     ignore_these = setdiff(names(worker_confusions), worker_restrict_list)
-    worker_confusions[ignore_these] = lapply(worker_confusions[ignore_these] , function(t) t*0)
+    worker_confusions[ignore_these] = zero_table  # UNTESTED
+    # worker_confusions[ignore_these] = lapply(worker_confusions[ignore_these] , function(t) t*0)
   }
   
   worker_info = data.frame(
     # X.amt_worker_id = names(worker_confusions), 
     row.names = names(worker_confusions), 
     num = as.vector(table(worker_ids)),
-    acc = dfagg(a, worker_ids, function(x) mean(x$response==x$label))
+    acc = dfagg(a, worker_ids, function(x) mean(x$response==x$label), trim=FALSE)
   )
+  # print(worker_info)
   reals_for_pred = function(pred) { 
     if (target_only) a@target
     else if (diag_only) pred
@@ -143,8 +167,8 @@ dlanalysis$count_name <- function(pred, real) {
   paste('c[',pred,'|',real,']', sep='')
 }
 
-dlanalysis$map_estimate_labels <- function(a, w, joint_posterior=FALSE, ...) {
-  label_posteriors = posterior_given_workers(a,w,...)
+dlanalysis$map_estimate_labels <- function(w, a, joint_posterior=FALSE, ...) {
+  label_posteriors = posterior_given_workers(w,a,...)
   ret = list2df(apply(label_posteriors, 1, function(row) {
     list(label=a@candidates[which.max(row)], logit=row[which.max(row)])
   }))
@@ -153,15 +177,16 @@ dlanalysis$map_estimate_labels <- function(a, w, joint_posterior=FALSE, ...) {
   # apply(label_posteriors, 1, function(row) { a@candidates[which.max(row)] })
 }
 
-dlanalysis$posterior_given_workers = dlanalysis$mygeneric('posterior_given_workers')
+dlanalysis$posterior_given_workers = dlanalysis$mygeneric('posterior_given_workers',2)
 
-dlanalysis$posterior_given_workers.categ <- function(a, w, 
-    candidates=a@candidates,
+dlanalysis$posterior_given_workers.categ <- function(w, a, 
+    candidates=a@candidates, trim_units=TRUE,
     label_priors=sapply(candidates, function(x) 1/length(candidates) )
 ) {
   logit_priors = log2(p2o(label_priors))    # all 0
   # only use a$X.amt_worker_ids and a$response.
   join = mymerge(a, w, by='X.amt_worker_ids', row.y=TRUE)
+  if (trim_units)  join$orig_id = trim_levels(join$orig_id)
   post_odds = dfagg(join, join$orig_id, dotprogress(function(x) {
     logits_per_label = lapply(candidates, function(label) {
       signal_llrs = sapply(1:nrow(x), function(i)
@@ -180,7 +205,7 @@ dlanalysis$posterior_given_workers.categ <- function(a, w,
 
 dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), labels=NULL, ...) {
   if (is.null(labels))
-    labels = map_estimate_labels(a,w)$label
+    labels = map_estimate_labels(w,a)$label
   ret = list(..., history=list(list(w=w,labels=labels)))
   ret$init = ret$history[[1]]
   
@@ -196,7 +221,7 @@ dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), label
     msg("New w:"); print(head(w[,c('num','acc',llr_name(a@candidates,a@candidates))]))
     # msg("New w:"); {print(head(w)); z=w[order(-w$num),]; print(head(z)); print(tail(z)) }
     
-    map_est = map_estimate_labels(a,w)
+    map_est = map_estimate_labels(w,a)
     # map_est<<-map_est
     labels = map_est$label
     # msg("New labels:")
@@ -208,10 +233,7 @@ dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), label
     ret$history[[iter]] = list(labels=labels, w=w, joint_logit=sum(map_est$logit))
     
     if (iter>1) {
-      funparams = ngrep("^llr",names(w))
-      print(dim(ret$history[[iter]]$w[,funparams]))
-      print(dim(ret$history[[iter-1]]$w[,funparams]))
-      
+      funparams = ngrep("^llr",names(w))      
       w_movements = ret$history[[iter]]$w[,funparams] - ret$history[[iter-1]]$w[,funparams]
       w_movements = as.matrix(abs(w_movements))
       msg("LLR param movements mean=", mean(w_movements), "median=", median(w_movements))
@@ -241,10 +263,11 @@ dlanalysis$eval_em <- function(results,u=u) {
   }
   moves = which(r$init$label != r$last$label)
   msg(length(moves),"of",length(r$init$label),"labels moved")
-  # print(table(r$init$label!=r$last$label))
-  
+
   # msg("Moved labels (numeric indexes):"); print(moves)
   
+  ret = list()
+    
   move_goodness = rep(NA, length(moves))
   # init_m = r$init$label[moves]
   # last_m = r$last$label[moves]
@@ -252,13 +275,16 @@ dlanalysis$eval_em <- function(results,u=u) {
   move_goodness[ (r$init$label!=u$gold & r$last$label==u$gold)[moves] ] = 'correction'
   move_goodness[ (r$init$label==u$gold & r$last$label!=u$gold)[moves] ] = 'mistake'
   move_goodness[ (r$init$label!=u$gold & r$last$label!=u$gold)[moves] ] = 'no_change'
-  t=table(move_goodness)
+  t = table(move_goodness)
   msg(sprintf("How many moves were good (p=%.3f)", if(sum(t)>0) binom.test(t['correction'],sum(t))$p.value else NA))
   print(t)
   print(table.freq(move_goodness))
+
+  ret$old_acc = mean(r$init$label==u$gold)
+  ret$acc = mean(r$last$label==u$gold)
+  msg("Old acc=",ret$old_acc, " New acc=", ret$acc)
   
-  msg("Old acc=",mean(r$init$label==u$gold), " New acc=",mean(r$last$label==u$gold))
-  
+  invisible(ret)
 }
 
 

@@ -10,20 +10,22 @@ dlanalysis = new.env()
 # i'm sure s3 has a way to do this but i cant figure it out.  (briefly tried
 # subclassing by making class() a vector, but couldnt figure out how to accept
 # more than 1 arg.  yes i'm sure i'm dumb.)  but, easier to make my own!
-dlanalysis$mygeneric <- function(orig_fname) {
-  return(function(arg1, ...) {
-    if ( is.null(attr(arg1,'data_type')) )
-      stop("Error, need a 'data_type' attribute on first arg")
-    fname = paste(orig_fname,arg1@data_type, sep='.')
+dlanalysis$mygeneric <- function(orig_fname, whicharg=1) {
+  return(function(...) {
+    args = list(...)
+    if ( is.null(attr(args[[whicharg]],'data_type')) )
+      stop("Error, need a 'data_type' attribute on arg # ",whicharg)
+    fname = paste(orig_fname,args[[whicharg]]@data_type, sep='.')
     fn = dlanalysis[[fname]]
     if ( is.null(fn) ) {
       stop("Error, couldn't find a function named ", fname)
     }
-    fn(arg1, ...)
+    fn(...)
   })
 }
 
 source("~/dlanalysis/workers.R")
+source("~/dlanalysis/xval.R")
 
 dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
   a = read.delim(filename, colClasses=list(response='factor',gold='factor',orig_id='factor'), sep=sep, ...)
@@ -51,6 +53,11 @@ dlanalysis$anno_subset <- function(a, limit=Inf, stochastic=FALSE) {
 }
 
 dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
+  # simulates workers coming to the task and doing as much as they can tolerate.
+  # order of workers is random. we take all anons the worker did in real life, 
+  # discarding per-unit overflows. Therefore we should get the same worker prolificness
+  # distribution
+  
   per_unit_inds = rep(1, length(present_levels(a$orig_id)))
   mat = matrix(NA, length(per_unit_inds), limit+1)
   row.names(mat) = present_levels(unique(a$orig_id))
@@ -71,23 +78,14 @@ dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
   }
   mat = mat[,1:limit]
   
-  
-  # dfagg(a, a$orig_id, function(x) {
-  #   x[x$X.amt_worker_id %in% mat[x$orig_id[1],], ]
-  # })
-
   ret = data.frame()
   for (uname in present_levels(a$orig_id)) {
     ret = rbind(ret, 
       a[a$orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,], ]
-      )
+    )
   }
   ret$X.amt_worker_ids = trim_levels(ret$X.amt_worker_ids)
   ret
-  # lapply(present_levels(a$orig_id), function(uname) {
-  #   a[a$orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,], ]
-  # })
-
 }
 
 
@@ -180,7 +178,6 @@ dlanalysis$thresh_analysis <- function(u, num_thresh=sum(!is.na(u$gold)), conf=N
   #   else which(cutoffs[cutoffs > t])[1]
   # })
 
-  
   ret = data.frame(thresh=cutoffs[cutoff_inds], 
     acc=r$perf@y.values[[1]][cutoff_inds],
     tp=r$pred@tp[[1]][cutoff_inds],

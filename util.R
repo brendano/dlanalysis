@@ -230,12 +230,13 @@ util$matrix2df <- function(x) {
 #    -> byvals are the names.
 # We attempt to be tolerant for slight inconsistencies in fn()'s return values.
 
-util$dfagg <- function(d, byvals, fn) {
+util$dfagg <- function(d, byvals, fn, trim=TRUE) {
   if (class(byvals) == 'function')
     byvals = byvals(d)
-  if (is.factor(byvals) && !setequal( as.c(unique(byvals)), levels(byvals)) ) {
-    msg("Warning, byvals is a factor but only using only a subset of its levels.  Coercing to character to avoid weirdnesses.  Hopefully this is what you want.")
-    byvals = as.character(byvals)
+  if (trim && is.factor(byvals) && !setequal( present_levels(byvals), levels(byvals)) ) {
+    # change to "stop" to ston
+    warning("Uhoh, byvals is a factor but only using only a subset of its levels.  Trimming them.  Hopefully this is what you want.")
+    byvals = trim_levels(byvals)
   }
 
   b = by(d, byvals, fn)
@@ -285,10 +286,6 @@ util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, sort=FALSE,
   if (row.x && nrow(ret)==nrow(x))  row.names(ret) = row.names(x)
   if (row.y && nrow(ret)==nrow(y))  row.names(ret) = row.names(y)
   
-  print(names(x))
-  print(names(ret))
-  print(c(names(x),keep.y))
-  ret<<-ret
   if (!is.null(keep.y))
     ret = ret[ ,c(names(x),keep.y) ]
   ret
@@ -299,9 +296,7 @@ util$flipleft <- function(x,named_vec, by) {
     names(named_vec) = levels(x[,by])  # erm.  tricky.
   y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
   merged = mymerge(x,y, row.y=T, by=by, all.x=T, all.y=F, sort=FALSE)
-  merged<<-merged
-  # stopifnot(all( row.names(merged) == row.names(x) ))
-  stopifnot(all( merged$X.amt_anno == x$X.amt_anno ))
+  # stopifnot(all( merged$X.amt_anno == x$X.amt_anno ))
   merged$ze_y_value
 }
 
