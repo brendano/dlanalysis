@@ -1,3 +1,8 @@
+# util.R:
+# Utilities to make R an even happier place
+# Brendan O'Connor, brenocon@gmail.com
+
+
 options(showWarnCalls=T, showErrorCalls=T)
 # mac specific?
 if (system("stty -a &>/dev/null") == 0)
@@ -7,10 +12,6 @@ if (system("stty -a &>/dev/null") == 0)
 
 util = new.env()
 
-util$unitnorm <- function(x, ...)  (x - mean(x,...)) / sd(x,...)
-
-util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
-
 util$msg <- function(...)  cat(..., "\n", file=stderr())
 
 util$strlen <- function(s)  length(strsplit(s,"")[[1]])
@@ -19,13 +20,11 @@ util$strmatch <- function(pat,s)  length(grep(pat,s)) > 0
 
 util$strstrip <- function(s)  gsub("^\\s*|\\s*$", "", s)
 
+util$as.c <- as.character
+
 util$is_empty <- function(collection)  length(collection) == 0
 
 util$last <- function(x)  tail(x, 1)
-
-util$as.c <- as.character
-
-util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
 
 util$unwhich <- function(indices, len=length(indices)) {
   ret = rep(F,len)
@@ -33,7 +32,17 @@ util$unwhich <- function(indices, len=length(indices)) {
   ret
 }
 
-util$shuffle <- function(x)  x[order(runif(length(x)))]
+util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
+
+util$unitnorm <- function(x, ...)  (x - mean(x,...)) / sd(x,...)
+
+util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
+
+util$shuffle <- function(...) UseMethod("shuffle")
+
+util$shuffle.default <- function(x)  x[order(runif(length(x)))]
+
+util$shuffle.data.frame <- function(x)  x[order(runif(nrow(x))),]
 
 util$present_levels <- function(x) intersect(levels(x), x)
 
@@ -75,7 +84,7 @@ util$most_common <- function(x)  names(which.max(table(x, exclude=NULL)))
 util$p2o <- function(p)  p / (1-p)    # probability -> odds ratio
 util$o2p <- function(o)  o / (1+o)    # odds ratio  -> probability
 util$lo2p <-function(lo) o2p(2^lo)
-util$p2lo <-function(p) log2(p2o(p))
+util$p2lo <-function(p) log2(p2o(p))  # i like base-2 logits best.
 
 util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
   # http://tolstoy.newcastle.edu.au/R/devel/04/11/1469.html
@@ -100,14 +109,6 @@ util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
    return(out)
 }
 
-# util$merge_vec <- function(df, y, by, name) {
-#   right = data.frame(bla=y)
-#   right[[name]] = right$bla
-#   rm(right$bla)
-#   right[[by]] = as.numeric(names(y))
-#   merge(df, right, sort=FALSE)
-# }
-
 util$lax_rbind <- function(...) {
   inputs = list(...)
   each_names = sapply(inputs, names)
@@ -129,6 +130,7 @@ util$fill_bool <- function(bool, true='yes', false='no') {
 }
 
 util$trmap <- function(vec, translation_table) {
+  # like unix "tr"
   ret = rep(NA, length(vec))
   for (x in names(translation_table))
     ret[as.c(vec)==x] = translation_table[[x]]
@@ -141,8 +143,9 @@ util$bgrep <- function(pat,x, ...) {
   unwhich(grep(pat,x,...), length(x))
 }
 
-# "normal" grep: return values, not indices
-util$ngrep <- function(pat,x, ...)  x[grep(pat,x,...)]
+util$ngrep <- function(pat,x, ...)
+  # "normal" grep: return values, not indices
+  x[grep(pat,x,...)]
 
 util$tapply2 <- function(x, ...) {
   # slightly nicer than tapply for some reason, i dont remember
@@ -155,13 +158,17 @@ util$tapply2 <- function(x, ...) {
 }
 
 util$inject <- function(collection, start, fn) {
+  # like lisp reduce.  (named after ruby)
   acc = start
   for (x in collection)
     acc = fn(acc, x)
   acc
 }
 
+
 util$select <- function(collection, fn) {
+  # nice for lists.  not useful for vectors, just use boolean vector indexing.
+  # (named after ruby)
   r = c()
   for (x in collection)
     if (fn(x))
@@ -179,15 +186,40 @@ util$xprod <- function(xs,ys) {
   ret
 }
 
-util$timeit <- function(x) {
+util$multi_xprod <- function(args) {
+  # args = list(...)
+  pair_xprod <- function(xs,ys) {
+    ret = list()
+    i=0
+    for (x in xs)  for (y in ys) {
+      i = i+1
+      ret[[i]] = c(x,y)
+    }
+    ret
+  }
+  ret = list(NA)
+  for (i in 1:length(args)) {
+    ret = pair_xprod(ret, args[[i]])
+  }
+  lapply(ret, function(x)  x[2:length(x)])
+}
+
+# routines to help manage longrunning jobs.
+# so much more potential here...
+
+util$timeit <- function(expr, name=NULL) {
+  # print how long the expression takes, and return its value too.  
+  # So you can interpose   timeit({ blabla })   around and chunk of code "blabla".
   start = Sys.time()
-  ret = eval(x)
+  ret = eval(expr)
   finish = Sys.time()
-  print(finish - start)
+  if (!is.null(name)) cat(name,": ")
+  cat(sprintf("%.3f seconds\n", finish-start))
   invisible(ret)
 }
 
 util$dotprogress <- function(callback, interval=100) {
+  # intended to wrap the anonymous callback for sapply() or somesuch.
   count = 0
   return(function(...) {
     if ((count <<- count+1) %% interval == 0)
@@ -196,10 +228,12 @@ util$dotprogress <- function(callback, interval=100) {
   })
 }
 
-# dataframe-outputting apply and aggregation functions
+# dataframe-outputting apply and aggregation functions.
+# i'm often confused whether proper R style should emphasis matrices or dataframes.
+# so here's some support for a dataframe-centric lifestyle.
 
 # like sapply/lapply except it expects fn() to yield lists.
-# each list gets coerced into a single row of a dataframe.
+# each list gets coerced into a single row of a returned dataframe.
 
 util$dfapply <- function(collection, fn, t=TRUE) {
   r = sapply(collection, fn)
@@ -209,7 +243,7 @@ util$dfapply <- function(collection, fn, t=TRUE) {
   r
 }
 
-# sapply() with fn() yielding lists retrns a matrix with named rows/cols ... 
+# sapply() with fn() yielding lists returns a matrix with named rows/cols ... 
 # and whenever you name-index into this thing it return a list ... yuck
 # make that shit more normal.
 
@@ -221,16 +255,90 @@ util$matrix2df <- function(x) {
     row.names=row.names(x))
 }
 
+util$kill_df_lists <- function(d) {
+  # if you have internal lists inside your dataframe.  if you always use
+  # matrix2df this should never happen.  but sometimes it does.  yikes!  
+  for(n in names(d)) {
+    if (is.list(d[,n])) {
+      d[,n] = list2v(d[,n])
+    }
+  }
+  d
+}
 
-# like by() but the data types are less crazy:
-#  if fn() returns a list, a data frame is returned.  
-#    -> byvals are the row names.
-#    -> each list is coerced into the rows.
-#  if fn() returns a nonlist, a list is returned.
-#    -> byvals are the names.
-# We attempt to be tolerant for slight inconsistencies in fn()'s return values.
+util$list2v <- function(x)  sapply(x, I)    # turns list's values into a vector.  index names are dropped.
+
+
+util$df2matrix <- function(d, bycols, targetcol, targetfn=mean) {
+  # for df's that essentially store sparse matrices.  make a real matrix via 
+  # by()-like conditioning on multiple columns ... a contingency table.
+  # Design goal: inspired by table(), which does the same thing, except cells are always counts.
+  #
+  # This is *NOT* the inverse of matrix2df !  would be good to change naming.
+  #
+  # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size": 
+  # > head(d)
+  #   size           ps  t acc
+  # 1    2 0.0009765625 -1 668
+  # 2    2 0.0009765625  0 668
+  # 3    2 0.0009765625 20 670
+  # 4    2 0.0009765625 50 664
+  # 
+  # you do:
+  # > df2matrix(head(d), c('ps','t'), 'acc', mean)
+  #               -1   0  20  50
+  # 0.0009765625 668 668 670 664
+  # 0.5          668 668  NA  NA
+  #
+  # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
+
+  for (j in 1:length(bycols))
+    d[,bycols[j]] = factor(d[,bycols[j]])
+
+  the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
+
+  # the by() cascade:
+  # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
+  #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
+  # so recursively build that linked list of closures, from right to left.
+  by_cascade = list()
+  by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
+  
+  for (j in length(bycols):1) {
+    by_cascade[[j]] = with(list(j=j),
+      function(x) {
+        b = by(x, x[,bycols[j]], by_cascade[[j+1]])
+      }
+    )
+  }
+
+  b = by_cascade[[1]](d)
+  m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
+
+  # simplest and slowest: dont use any margins for assignments.
+  all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
+  for (i in 1:length(all_spots)) {
+    inds = all_spots[[i]]
+    m[t(inds)] = b[[inds]]
+  }
+  m
+}
+
 
 util$dfagg <- function(d, byvals, fn, trim=TRUE) {
+  # like by() but usually returns dataframes:
+  #    if fn() returns a list, a data frame is returned.  
+  #      -> byvals are the row names.
+  #      -> each list is coerced into the rows.
+  #    if fn() returns a nonlist, a list is returned.
+  #      -> byvals are the names.
+  # We attempt to be tolerant for slight inconsistencies in fn()'s return values.
+  #
+  # Goal is to be like SQL GROUP BY: dataframes in, aggregated dataframes out.
+  #
+  # If you have a multidimensional matrix (R calls "array"), apply() lets you 
+  # select the margin for rollup in a similar way.
+
   if (class(byvals) == 'function')
     byvals = byvals(d)
   if (trim && is.factor(byvals) && !setequal( present_levels(byvals), levels(byvals)) ) {
@@ -241,29 +349,18 @@ util$dfagg <- function(d, byvals, fn, trim=TRUE) {
 
   b = by(d, byvals, fn)
   list2df(b)
-
-  # cols = NULL
-  # for (i in 1:min(100,length(b))) {
-  #   cols = c(cols, names(b[[i]]))
-  # }
-  # cols = unique(cols)
-  # 
-  # ret = data.frame(row.names=names(b))
-  # 
-  # for (col in cols) {
-  #   ret[,col] = sapply(names(b), function(k) b[[k]][[col]])
-  # }
-  # if (length(cols) == 0) {
-  #   return(sapply(names(b), function(k) b[[k]]))
-  # }
-  # ret
 }
 
 util$list2df <- function(ls) {
+  # Wants a list of lists, each of which has the same set named indexes.
+  # Outputs a dataframe where said indexes are the column names.
+  # Is tolerant for slight inconsistencies of present indexes.
+  # Transfers list index names to dataframe rownames.
+  
   b=ls
   cols = NULL
   for (i in 1:min(100,length(b))) {
-    cols = c(cols, names(b[[i]]))
+    cols = c(cols, try(names(b[[i]])))
   }
   cols = unique(cols)
 
@@ -279,6 +376,10 @@ util$list2df <- function(ls) {
 }
 
 util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, sort=FALSE, ...) {
+  # Wrapper around merge().  turns out this is not needed because i didnt 
+  # read merge()'s manual page carefully enough: it has a facility for
+  # joining on rownames.  merge() is great.
+    
   if (row.x)  x[,by] = row.names(x)
   if (row.y)  y[,by] = row.names(y)
 
@@ -292,6 +393,7 @@ util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, sort=FALSE,
 }
 
 util$flipleft <- function(x,named_vec, by) {
+  # kinda dangerous.  but so convenient
   if (is.null(names(named_vec)))
     names(named_vec) = levels(x[,by])  # erm.  tricky.
   y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
@@ -301,7 +403,7 @@ util$flipleft <- function(x,named_vec, by) {
 }
 
 util$read.xmlss <- function(f) {
-  ## BUG: the xml skips cells sometimes.  tricky to parse, argh
+  ## BAD BUG: the xml skips cells sometimes.  tricky to parse, argh.
   # Mac Excel 2004 calls this "XML Spreadsheet".  It's nice because it's UTF-8.
   #  [ mac .xls seems to be macroman, but xls2csv (perl converter) f's it up,.
   #    and then iconv can't recover.  boo! ]
@@ -333,10 +435,11 @@ util$mate <- function(...) {
   system(paste("mate", ...))
 }
 
-# pretty-print as yaml.  intended for rows with big textual cells.
-# a la mysql's \G operator
-
 util$ppy <- function(x, column.major=FALSE, ...) {
+  # pretty-print as yaml.  intended for rows with big textual cells.
+  # a la mysql's \G operator a la http://rubyisawesome.com/2007/7/10/mysql-secrets-g-instead-of
+  # same usecase as ppy() in my http://dotfiles.org/~brendano/.irbrc
+
   library(yaml)
   cat(as.yaml(x, column.major=column.major), ...)
   cat("\n", ...)
@@ -349,6 +452,8 @@ util$newwin <- function(x) {
   system("mate /tmp/tmp.txt &")
 }
 
+
+##########
 
 while("util" %in% search())
   detach("util")

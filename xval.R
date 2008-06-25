@@ -16,6 +16,9 @@
 #   pred
 # }
 
+dlanalysis$xval_by_hit <- function(a,u, ...) {
+  
+}
 
 dlanalysis$xval_by_unit <- function(a, u, 
     model_fn=function(...) worker_an(..., trim_workers=FALSE), 
@@ -29,16 +32,12 @@ dlanalysis$xval_by_unit <- function(a, u,
   # crossval(1:10, y, function(x,y) lm(y~x), function(m,x) predict(m,list(x=x)))$cv.fit
   r = bootstrap::crossval(row.names(u), labels,
     theta.fit = function(units, labels) {
-      # msg("TRAINING UNITS"); print(units)
       subset = a[a$orig_id %in% units,]
       subset$orig_id = trim_levels(subset$orig_id)
       model_fn(subset, labels=labels, ...)
     },
     theta.predict = function(model, units) {
-      # msg("TEST UNITS"); print(units)
-      # msg("MODEL");      print(head(model[order(-model$num),],20));
       preds = pred_fn(model, a[a$orig_id %in% units,])
-      # msg("PREDICTIONS");      print(preds)
       # they come back sorted by unit name.  have to reorder to the random order that crossval() gave
       # print(preds[units,]$label)
       as.c( preds[units,]$label )
@@ -53,4 +52,53 @@ dlanalysis$xval_by_unit <- function(a, u,
 
 dlanalysis$print.xval_results <- function(r) {
   cat(sprintf("Cross-validation accuracy: %.3f\n", r$acc))
+  cat(names(r),"\n")
+}
+
+
+dlanalysis$train_test_split <- function(a,u, train_perc=.75, rand=F, rotate=1) {
+  train = rep(TRUE,nrow(u))
+  test_inds = round(0.8*nrow(u)):nrow(u)
+  test_inds = (test_inds - (rotate-1)*length(test_inds)) %% nrow(u)
+  train[test_inds] = FALSE
+  if (rand)  train = shuffle(train)
+  
+  train_test_split2(a,u, train)
+}
+
+dlanalysis$train_test_split2 <- function(a,u, train) {
+  test = !train
+  atrain = a$orig_id %in% row.names(u)[train]
+  atest = !atrain
+  list(train=train, test=test,  atrain=atrain, atest=atest)  
+}
+
+
+dlanalysis$xval_splits <- function(a,u, ngroup=5, rand=F) {
+  folds = rep(1:ngroup, nrow(u)/ngroup + ngroup)[1:nrow(u)]
+  
+  if (rand)  folds = shuffle(folds)
+  splits = sapply(1:ngroup, function(k) { train_test_split2(a,u, folds!=k) })
+  splits
+}
+
+dlanalysis$xval_preds <- function(a,u, splits=NULL, model_fn=worker_an, pred_fn=map_estimate_labels, ngroup=10, rand=F, ...) {
+  if (is.null(splits)) {
+    splits = xval_splits(a,u, ngroup=ngroup, rand=rand)
+  }
+  all_est = data.frame(row.names=row.names(u))
+  for (k in 1:ncol(splits)) {
+    s = splits[,k]
+    w = model_fn(a[ s$atrain, ], ...)
+    est = pred_fn(w,a)
+    if (k==1)  {
+      all_est[,names(est)] = NA
+      all_est$label = factor(all_est, levels=u@candidates)
+    }
+    all_est[s$test,] = est[s$test,]
+    
+    # cat(sprintf("fold %2d: PLURALITY: %.3f  CALIB: %.3f\n", k, mean(u$plurality[s$test] == u$gold[s$test]), mean(est$label[s$test] == u$gold[s$test])))
+    
+  }
+  all_est
 }

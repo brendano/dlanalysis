@@ -7,9 +7,9 @@ source("~/dlanalysis/util.R")
 
 dlanalysis = new.env()
 
-# i'm sure s3 has a way to do this but i cant figure it out.  (briefly tried
+# i'm sure s3 has a way to do this but i cant figure it out.  briefly tried
 # subclassing by making class() a vector, but couldnt figure out how to accept
-# more than 1 arg.  yes i'm sure i'm dumb.)  but, easier to make my own!
+# more than 1 arg.  yes i'm sure i'm dumb.  but, easier to make my own...
 dlanalysis$mygeneric <- function(orig_fname, whicharg=1) {
   return(function(...) {
     args = list(...)
@@ -30,14 +30,12 @@ source("~/dlanalysis/xval.R")
 dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
   a = read.delim(filename, colClasses=list(response='factor',gold='factor',orig_id='factor'), sep=sep, ...)
   attr(a,'data_type') = 'categ'
-  if ( ! setequal(levels(a$responsee), levels(a$factor)))
+  if ( ! setequal(levels(a$response), levels(a$gold)))
     stop("Uhoh, levels of response and gold are not the same.  need to hack up this code here")
-  # a$response <<- as.factor(a$response, levels=BLA)
-  # a$gold     <<- as.factor(a$gold, levels=BLA)
   attr(a,'candidates') = levels(a$response)
   attr(a,'target') = tail(a@candidates, 1)
-  msg("Candidates: ",a@candidates)
-  msg("Target: ",a@target)
+  msg("Candidates: ", a@candidates)
+  msg("Target: ", a@target)
   a
 }
 
@@ -53,39 +51,49 @@ dlanalysis$anno_subset <- function(a, limit=Inf, stochastic=FALSE) {
 }
 
 dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
-  # simulates workers coming to the task and doing as much as they can tolerate.
+  # simulates workers coming to the task and doing as much as they want.
   # order of workers is random. we take all anons the worker did in real life, 
   # discarding per-unit overflows. Therefore we should get the same worker prolificness
-  # distribution
-  
-  per_unit_inds = rep(1, length(present_levels(a$orig_id)))
-  mat = matrix(NA, length(per_unit_inds), limit+1)
-  row.names(mat) = present_levels(unique(a$orig_id))
-  names(per_unit_inds) = present_levels(unique(a$orig_id))
-  
+  # distribution, though the overflow discarding has some sort of weird effect --
+  # tail workers tend to drop less than head workers, maybe?
+    
   worker_random_order = shuffle(unique(a$X.amt_worker_ids))
-  # worker_random_order = c('sparseman','dumb1','dumb2')
+  orig_id = trim_levels(a$orig_id)
+  per_unit_inds = rep(1, nlevels(orig_id))
+  names(per_unit_inds) = levels(orig_id)
   
+  mat = matrix(NA, length(per_unit_inds), limit+1)
+  row.names(mat) = levels(orig_id)
+  
+        # timeit({
   for (worker in as.c(worker_random_order)) {
-    units_worker_did = unique(a$orig_id[a$X.amt_worker_ids==worker])
+    units_worker_did = unique(orig_id[a$X.amt_worker_ids==worker])
     for (uname in units_worker_did) {
       mat[uname, per_unit_inds[uname]] = worker
     }
-    
     per_unit_inds[units_worker_did] = per_unit_inds[units_worker_did] + 1
     per_unit_inds[per_unit_inds > limit] = limit+1
-    if (all(per_unit_inds>limit)) break
+    if (all(per_unit_inds > limit)) break
   }
   mat = mat[,1:limit]
+  if (is.vector(mat))  mat = matrix(mat, dimnames=list(levels(orig_id), NULL))
+        # })
   
-  ret = data.frame()
-  for (uname in present_levels(a$orig_id)) {
-    ret = rbind(ret, 
-      a[a$orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,], ]
-    )
+        # timeit( {
+  # .21 => .15 seconds on switching to numeric indices
+  inds_from_a = matrix(0, nlevels(orig_id), limit)
+  for (unit in 1:nlevels(orig_id)) {
+    inds = which(  as.integer(orig_id)==unit  &  a$X.amt_worker_id %in% mat[unit,]  )
+    inds_from_a[unit,] = inds
   }
-  ret$X.amt_worker_ids = trim_levels(ret$X.amt_worker_ids)
-  ret
+  # slower version
+  # inds_from_a = matrix(0, nlevels(orig_id), limit, dimnames=list(levels(orig_id),NULL))
+  # for (uname in levels(orig_id)) {
+  #   inds = which(  orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,]  )
+  #   inds_from_a[uname,] = inds
+  # }
+        # })
+  a[ inds_from_a, ]
 }
 
 
@@ -102,7 +110,7 @@ dlanalysis$agg_to_unit.categ <- function(a,
     # winner = names(which.max(table( x[,attr] )))
     # ret[[paste(attr,'decision',sep='_')]] = winner
     p = table(x$response) / nrow(x)
-    ret[['entropy']] = sum(-p * log(p), na.rm=TRUE)
+    # ret[['entropy']] = sum(-p * log(p), na.rm=TRUE)
     ret = c(ret, table(x$response))
     ret[['plurality']] = most_common(x$response)
     t = table(x$gold, exclude=NULL)
@@ -114,6 +122,8 @@ dlanalysis$agg_to_unit.categ <- function(a,
   attr(u,'candidates') = a@candidates
   attr(u,'target') = a@target
   attr(u,'data_type') = 'categ'
+  u$gold = factor(u$gold, levels=u@candidates)
+  u$plurality = factor(u$plurality, levels=u@candidates)
   u  
 }
 
@@ -453,7 +463,25 @@ Dots have horizontal jitter (x-axis has no meaning)",
 }
 
 
+dlanalysis$make_ext <-function() {
+  cmd = "cd ~/dlanalysis && g++ -dynamic -bundle -I/Library/Frameworks/R.framework/Resources/include ext.cc -o ext.dylib"
+  cat(cmd,"\n")
+  system(cmd)
+}
+
+dlanalysis$load_ext <- function() {
+  dyn.load("~/dlanalysis/ext.dylib")
+}
+
+dlanalysis$renew_ext <- function() {
+  make_ext()
+  load_ext()
+}
+
+
 
 while("dlanalysis" %in% search())
   detach("dlanalysis")
 attach(dlanalysis)
+
+load_ext()
