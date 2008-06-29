@@ -24,6 +24,7 @@ dlanalysis$mygeneric <- function(orig_fname, whicharg=1) {
   })
 }
 
+
 source("~/dlanalysis/workers.R")
 source("~/dlanalysis/xval.R")
 
@@ -34,8 +35,24 @@ dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
     stop("Uhoh, levels of response and gold are not the same.  need to hack up this code here")
   attr(a,'candidates') = levels(a$response)
   attr(a,'target') = tail(a@candidates, 1)
+  class(a) = c('data.frame','anno')
   msg("Candidates: ", a@candidates)
   msg("Target: ", a@target)
+  a$X.amt_annotation_ids = NULL
+  a
+}
+
+dlanalysis$load_numeric_anno <- function(filename, sep="\t", ...) {
+  a = read.delim(filename, colClasses=list(orig_id='factor'), sep=sep, ...)
+  attr(a,'data_type') = 'numeric'
+  class(a) = c('data.frame','anno')
+  a$X.amt_annotation_ids = NULL
+  a
+}
+
+dlanalysis$trim_levels.anno <- function(a) {
+  a$X.amt_worker_ids =  trim_levels(a$X.amt_worker_ids)
+  a$orig_id = trim_levels(a$orig_id)
   a
 }
 
@@ -125,6 +142,16 @@ dlanalysis$agg_to_unit.categ <- function(a,
   u$gold = factor(u$gold, levels=u@candidates)
   u$plurality = factor(u$plurality, levels=u@candidates)
   u  
+}
+
+dlanalysis$agg_to_unit.numeric <- function(a, by='orig_id') {
+  u = dfagg(a, a[,by], function(x) {
+    ret = list()
+    if (length(unique(x$gold)) != 1)  stop("uhoh inconsistent gold labels")
+    list(mean_response=mean(x$response), gold=x$gold[1])
+  })
+  attr(u,'data_type') = 'numeric'
+  u
 }
 
 dlanalysis$agg_to_unit_old1 <- function(a, by='unit_id',

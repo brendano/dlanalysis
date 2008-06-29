@@ -16,7 +16,7 @@
 //   list()
 //
 // .C() is very low level. To pass data in and out, you get raw pointers
-// to the internal vectors that R itself uses. I think.
+// to the internal vectors that R itself uses.  (or copies thereof.  or something.)
 //
 //   > .C("mul_2", as.integer(1:3), as.integer(3), as.integer(rep(-1,3)))
 //   [[1]]

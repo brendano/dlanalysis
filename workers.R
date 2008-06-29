@@ -1,29 +1,122 @@
-dlanalysis$worker_an = dlanalysis$mygeneric('worker_an')
+dlanalysis$worker_an = function(a, labels=NULL, labels_long=a$gold, 
+  trim_workers=FALSE, trim_units=TRUE, ...)
+{
+  worker_ids = a$X.amt_worker_ids 
+  if (trim_workers)  worker_ids = trim_levels(worker_ids)
+  if (trim_units)  a$orig_id = trim_levels(a$orig_id)
 
-dlanalysis$worker_an.categ <- function(a, labels=NULL, 
+  if ( !is.null(labels) ) {
+    a$label = flipleft(a,labels, 'orig_id')
+  } else if (!is.null(labels_long)) {
+    a$label = labels_long
+  } else {
+    stop("need labels somehow")
+  }
+  
+  fn = dlanalysis$mygeneric('worker_an')
+  fn(a, worker_ids, ...)
+} 
+
+dlanalysis$worker_an.numeric <- function(a, worker_ids) {
+  stopifnot(nrow(a) == length(worker_ids))
+  worker_info = dfagg(a, worker_ids, function(x) {
+    r = list(
+      num = nrow(x),
+      cor = safecor(x$response, x$gold),
+      sd = sd(x$response - x$gold),
+      cm_bias = mean(x$response - x$gold))
+    r$cm_sd = sd( (x$response - r$cm_bias) - x$gold )
+    
+    linmodel = lm(gold~response, data=x)
+    r$lm_coef = coef(linmodel)[['response']]
+    r$lm_bias = coef(linmodel)[['(Intercept)']] 
+    r$lm_sd = sd(predict(linmodel) - x$gold)
+    r
+  }, trim=FALSE)
+
+  missing = is.na(worker_info$num)
+  
+  worker_info$num[missing]  = 0
+  worker_info$cm_bias[missing] = 0
+  worker_info$cm_sd[missing]   = Inf
+  worker_info$lm_bias[missing] = 0
+  worker_info$lm_coef[missing] = 1
+  worker_info$lm_sd[missing] = Inf
+  
+  worker_info$lm_coef[is.na(worker_info$lm_coef)] = 1
+  worker_info
+}
+
+dlanalysis$safecor <- function(x,y) {
+  if ( !is.na(sd(x)) && sd(x)==0 )  NA
+  else if ( !is.na(sd(y)) && sd(y)==0 )  NA
+  else try(cor(x,y, use='pairwise.complete.obs'))
+}
+dlanalysis$fit_anno_model <- dlanalysis$mygeneric("fit_anno_model")
+
+dlanalysis$fit_anno_model.numeric <- function(a, prior_mean=NULL, prior_sd=NULL, ...) {
+  if (is.null(prior_mean))  prior_mean = mean( dfagg(a$gold,a$orig_id,first) )
+  if (is.null(prior_sd))  prior_sd = sd( dfagg(a$gold,a$orig_id,first) )
+  # print(prior_mean)
+  ret = list(
+    w = worker_an(a, ...),
+    prior_mean = prior_mean,
+    prior_sd = prior_sd
+  )
+  ret
+}
+
+dlanalysis$label_posterior.numeric <- function(model, a, u=NULL, no_priors=FALSE, ...) {
+  p = posterior_given_workers(model$w, a, ...)
+  
+  if (! no_priors) {
+    w1 = p$worker_weight;  w2 = 1/model$prior_sd^2 
+    p$mean = 1/(w1+w2) * (w1*p$mean  +  w2*model$prior_mean)    
+  }
+  
+  p
+}
+
+dlanalysis$posterior_given_workers.numeric <- function(w, a, use='cm') {
+  aw = merge(a,w, by.x='X.amt_worker_ids', by.y=0)
+  posterior = dfagg(aw, aw$orig_id, function(x) {
+    if (use=='lm')
+      list(
+        mean = weighted.mean((x$response - x$lm_bias)/x$lm_coef,  (x$lm_coef/x$lm_sd)^2),
+        worker_weight = sum((x$lm_coef/x$lm_sd)^2) )
+    else if (use=='cm') {
+      list(
+        mean = weighted.mean(x$response - x$cm_bias, 1/x$cm_sd^2),
+        sd = 42,
+        worker_weight = sum(1/x$cm_sd^2))
+    } else if (use=='0b') {
+      list(
+        mean = weighted.mean(x$response, 1/x$sd^2),
+        worker_weight = sum(1/x$sd^2))
+    }
+
+    else stop("specify model to use")
+  })
+  posterior
+}
+
+
+
+
+
+dlanalysis$worker_an.categ <- function(a, worker_ids,
   pseudocount=1, 
   pseudocounts=NULL,
-  pseudocount_diag=8, pseudocount_offdiag=2,
+  pseudocount_diag=8, pseudocount_offdiag=2,  
   
-  trim_workers=FALSE, trim_units=TRUE,
-  labels_long=a$gold, count_thresh=0, head_thresh=0, worker_restrict_list=NULL,
+  count_thresh=0, head_thresh=0, worker_restrict_list=NULL,
   globalize_tail_cutoff = -1,
   
   candidates=a@candidates,
   positive_hack=FALSE, restrict_hack_to_workers=NULL,
-  target_only=FALSE, diag_only=FALSE, counts=FALSE, lrs=FALSE, llrs=TRUE, probs=FALSE) {
+  target_only=FALSE, diag_only=FALSE, counts=FALSE, lrs=FALSE, llrs=TRUE, probs=FALSE)
+{
   
-  worker_ids = a$X.amt_worker_ids 
-  if (trim_workers)  worker_ids = trim_levels(worker_ids)
-  if (trim_units)  a$orig_id = trim_levels(a$orig_id)
-  
-  # msg("LABELS");  print(labels)
-  if ( !is.null(labels) ) {
-    if (length(labels) != length(levels(a$orig_id))) stop("uhoh")
-    a$label = flipleft(a,labels, 'orig_id')
-  } else if (!is.null(labels_long)) {
-    a$label = labels_long
-  } else stop("need labels somehow")
   
   cs = candidates
   if (is.null(pseudocounts)) {
@@ -149,8 +242,9 @@ dlanalysis$worker_an.categ <- function(a, labels=NULL,
   worker_info
 }
 
+
 dlanalysis$uniform_worker_an <- function(a) {
-  # dummy worker models for first EM step.  Using these has same effect as a
+  # dummy worker models for first EM step.  Using these has same effect as an
   # equally-weighted plurality voting rule.
   w = data.frame(row.names=levels(a$X.amt_worker_ids))
   for (pred in a@candidates)
@@ -189,21 +283,19 @@ dlanalysis$likelihood_name <- function (pred,real, not_rhs=FALSE) {
   paste('p[',pred,'|',real,']',  sep='')
 }
 
-dlanalysis$lr_name <- function(pred, real) {
-  paste('lr[', pred,'|',real, ']',  sep='')
-}
+dlanalysis$lr_name <- function(pred, real)  paste('lr[', pred,'|',real, ']',  sep='')
 
-dlanalysis$llr_name <- function(pred, real) {
-  paste('llr[', pred,'|',real, ']',  sep='')
-}
+dlanalysis$llr_name <- function(pred, real)  paste('llr[', pred,'|',real, ']',  sep='')
 
-dlanalysis$count_name <- function(pred, real) {
-  paste('c[',pred,'|',real,']', sep='')
-}
+dlanalysis$count_name <- function(pred, real)  paste('c[',pred,'|',real,']', sep='')
 
-dlanalysis$map_estimate_labels <- function(w, a, ...) {
+dlanalysis$label_posterior <- dlanalysis$mygeneric("label_posterior",2)
+
+dlanalysis$label_posterior.categ <- function(w, a, ...) {
+  stop("fixme use model not worker table")
   label_posteriors = posterior_given_workers(w,a,...)
-  # label_posteriors = posterior_given_workers1(w,a,...)
+  # if (a@data_type=='numeric')  return(label_posteriors)
+  
   ret = list2df(apply(label_posteriors, 1, function(row) {
     list(label=a@candidates[which.max(row)], logit=row[which.max(row)])
   }))
@@ -215,16 +307,15 @@ dlanalysis$map_estimate_labels <- function(w, a, ...) {
 dlanalysis$posterior_given_workers = dlanalysis$mygeneric('posterior_given_workers',2)
 dlanalysis$posterior_given_workers1 = dlanalysis$mygeneric('posterior_given_workers1',2)
 
-dlanalysis$posterior_given_workers.categ <- function(w, a, 
+dlanalysis$posterior_given_workers.categ <- function(w, a,
     candidates=a@candidates, trim_units=TRUE,
-    label_priors=sapply(candidates, function(x) 1/length(candidates) )
-) {
+    label_priors=sapply(candidates, function(x) 1/length(candidates) )) 
+{
   logit_priors = log2(p2o(label_priors))    # all 0
   if (trim_units)  a$orig_id = trim_levels(a$orig_id)
   
   wm = worker_llr_matrix(w)
   anno_llr_matrix = calculate_anno_llrs(wm, a$X.amt_worker_ids, a$response, a@candidates)
-  alm <<- anno_llr_matrix
 
   unit_posteriors = dfagg(anno_llr_matrix, a$orig_id, function(x) apply(x,2,sum))
   
@@ -233,6 +324,7 @@ dlanalysis$posterior_given_workers.categ <- function(w, a,
   
   unit_posteriors
 }
+
 
 dlanalysis$calculate_anno_llrs <- function(wm, worker_ids, responses, candidates) {
   N = length(responses);   stopifnot(N == length(worker_ids))
@@ -254,11 +346,10 @@ dlanalysis$worker_llr_matrix <- function(w, cs=w@candidates) {
   m
 }
 
-
 dlanalysis$posterior_given_workers1.categ <- function(w, a, 
     candidates=a@candidates, trim_units=TRUE,
-    label_priors=sapply(candidates, function(x) 1/length(candidates) )
-) {
+    label_priors=sapply(candidates, function(x) 1/length(candidates) ))
+{
   logit_priors = log2(p2o(label_priors))    # all 0
   print(logit_priors)
   # only use a$X.amt_worker_ids and a$response.
@@ -280,10 +371,9 @@ dlanalysis$posterior_given_workers1.categ <- function(w, a,
   post_odds
 }
 
-
 dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), labels=NULL, ...) {
   if (is.null(labels))
-    labels = map_estimate_labels(w,a)$label
+    labels = label_posterior(w,a)$label
   ret = list(..., history=list(list(w=w,labels=labels)))
   ret$init = ret$history[[1]]
   
@@ -299,7 +389,7 @@ dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), label
     msg("New w:"); print(head(w[,c('num','acc',llr_name(a@candidates,a@candidates))]))
     # msg("New w:"); {print(head(w)); z=w[order(-w$num),]; print(head(z)); print(tail(z)) }
     
-    map_est = map_estimate_labels(w,a)
+    map_est = label_posterior(w,a)
     labels = map_est$label
     # msg("New labels:")
     # x=labels; names(x)=NULL; print(factor(x))
@@ -325,8 +415,6 @@ dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), label
   ret$last = ret$history[[ length(ret$history) ]]
   ret
 }
-
-
 
 dlanalysis$eval_em <- function(results,u=u) {
   msg("\n*** EM evaluation ***")
@@ -360,7 +448,6 @@ dlanalysis$eval_em <- function(results,u=u) {
   invisible(ret)
 }
 
-
 dlanalysis$merge_worker_tail <- function(a, cutoff=20) {
   w = worker_an(a)
   tail_workers = row.names(w)[ w$num <= cutoff ]
@@ -372,65 +459,31 @@ dlanalysis$merge_worker_tail <- function(a, cutoff=20) {
 
 
 
+dlanalysis$worker_unit_plot <- function(a, nbreaks=10, reorder=FALSE, ...) {
+  m = df2matrix(a,c('X.amt_worker_ids','orig_id'),'response')
+  w_first_j = dfagg(a,a$X.amt_w,function(x) mean(as.integer(x$orig_id)))
+  m = m[order(w_first_j),]
+  
+  if (a@data_type=='numeric') {
+    breaks = seq(min(c(a$gold,a$response)), max(c(a$gold,a$response)), length.out=nbreaks+1)
+    colors = rev(heat.colors(nbreaks))
+    legend_labels = breaks[1:nbreaks]
+  } else if (a@data_type=='categ') {
+    m = matrix(as.integer(factor(m, levels=a@candidates)),  nrow(m), ncol(m))
+    breaks = 0:length(a@candidates)
+    colors = head(c('red','blue','green','purple'),  length(a@candidates))
+    ncol = length(colors)
+    legend_labels = a@candidates
+  }
+
+  if (reorder) {
+    distfun = function(x) { x[is.na(x)]=0; d=dist(x); d}
+    heatmap(m, scale='none',col=colors,breaks=breaks, distfun=distfun, ...)
+  } else {
+    heatmap(m, Rowv=NA,Colv=NA,scale='none', col=colors, breaks=breaks, ...)
+  }
+  legend("topleft", legend=legend_labels, fill=colors, inset=0)
+}
 
 
 
-
-
-
-
-
-
-
-# This somewhat infinitely hangs.  wtf
-# dlanalysis$posterior_given_workers2.categ <- function(a, w, 
-#     candidates=a@candidates,
-#     label_priors=sapply(candidates, function(x) 1/length(candidates) )
-# ) {
-#   # only use a$X.amt_worker_id and a$response.
-#   join = mymerge(a, w, by='X.amt_worker_ids', row.y=TRUE)
-#   signal_llrs = data.frame(row.names=row.names(join))
-#   for (l in candidates) signal_llrs[,l] = rep(NA,nrow(join))
-#   print(signal_llrs)
-#   # names(signal_llrs) = candidates
-#   
-#   for (label in candidates) {
-#     x = join$response==label
-#     signal_llrs[x,label] = join[x,llr_name(join$response[x], label)]
-#   }
-#   print(signal_llrs)
-#   return(NULL)
-#   
-#   post_odds = dfagg(signal_llrs, join$orig_id, dotprogress(function(signal_llrs_for_unit) {
-#     logits_per_label = lapply(candidates, function(label) {
-#       sum(signal_llrs_for_unit[,label]) + log(p2o(label_priors[label]))
-#     })
-#     names(logits_per_label) = candidates
-#     logits_per_label
-#   },interval=10))
-#   # post_odds = dfagg(join, join$orig_id, dotprogress(function(x) {
-#   #   logits_per_label = lapply(candidates, function(label) {
-#   #     signal_llrs = sapply(1:nrow(x), function(i)
-#   #       x[i,llr_name(x$response[i], label)]  )
-#   #     sum(signal_llrs) + log(p2o(label_priors[label]))
-#   #   })
-#   #   names(logits_per_label) = candidates
-#   #   logits_per_label
-#   # }, interval=10))
-#   msg("\n")
-#   post_odds
-# }
-
-
-# odds_per_label = lapply(candidates, function(label) {
-#   # print(label)
-#   signal_lratios = sapply(1:nrow(x), function(i)
-#     x[i, likelihood_name(x$response[i], label)] / x[i, likelihood_name(x$response[i], label, not_rhs=TRUE)] )
-#   # print(signal_lratios)
-#   # print(prod(signal_lratios))
-#   prod(signal_lratios)  *  label_priors[label]
-# })
-# names(odds_per_label) = candidates
-# # opl<<-odds_per_label
-# # print(odds_per_label)
-# odds_per_label
