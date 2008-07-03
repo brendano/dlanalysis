@@ -26,6 +26,7 @@ dlanalysis$mygeneric <- function(orig_fname, whicharg=1) {
 
 
 source("~/dlanalysis/workers.R")
+source("~/dlanalysis/workers_categ.R")
 source("~/dlanalysis/xval.R")
 
 dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
@@ -65,6 +66,13 @@ dlanalysis$anno_subset <- function(a, limit=Inf, stochastic=FALSE) {
   }
   ret
   # dfagg(a, a$orig_id, subset_fn)
+}
+
+dlanalysis$anno_sample_simple <- function(a, limit=5) {
+  N = 10
+  mask = replicate(nlevels(a$orig_id), shuffle( c(rep(T,limit), rep(F,N-limit)) ))
+  mask = as.vector(mask)
+  trim_levels(a[mask,])
 }
 
 dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
@@ -127,7 +135,7 @@ dlanalysis$agg_to_unit.categ <- function(a,
     # winner = names(which.max(table( x[,attr] )))
     # ret[[paste(attr,'decision',sep='_')]] = winner
     p = table(x$response) / nrow(x)
-    # ret[['entropy']] = sum(-p * log(p), na.rm=TRUE)
+    ret[['entropy']] = sum(-p * log(p), na.rm=TRUE)
     ret = c(ret, table(x$response))
     ret[['plurality']] = most_common(x$response)
     t = table(x$gold, exclude=NULL)
@@ -505,6 +513,16 @@ dlanalysis$renew_ext <- function() {
   load_ext()
 }
 
+
+dlanalysis$fair_plurality_acc <- function(u) {
+  scores = sapply(1:nrow(u), function(i) {
+    num_votes = u[i,u@candidates]
+    winners = (num_votes == max(num_votes))
+    is_correct = any(u$gold[i] == u@candidates[winners])
+    is_correct / sum(winners)
+  })
+  mean(scores)
+}
 
 
 while("dlanalysis" %in% search())

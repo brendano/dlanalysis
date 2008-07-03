@@ -36,7 +36,9 @@ util$unwhich <- function(indices, len=length(indices)) {
 
 util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
 
-util$unitnorm <- function(x, ...)  (x - mean(x,...)) / sd(x,...)
+util$unitnorm <- function(x, na.rm=FALSE, ...)  (x - mean(x,na.rm=na.rm,...)) / sd(x,na.rm=na.rm)
+
+util$renorm <- function(x, mean=0, sd=1, ...)  (unitnorm(x,...) * sd) + mean
 
 util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
 
@@ -231,7 +233,7 @@ util$timeit <- function(expr, name=NULL) {
   invisible(ret)
 }
 
-util$dotprogress <- function(callback, interval=100) {
+util$dotprogress <- function(callback, interval=10) {
   # intended to wrap the anonymous callback for sapply() or somesuch.
   count = 0
   return(function(...) {
@@ -458,9 +460,10 @@ util$read.xmlss <- function(f) {
 # for interactivity...
 
 util$excel <- function(d) {
-  con = file("/tmp/tmp.csv", "w", encoding="MACROMAN")
+  f = paste("/tmp/tmp.", round(runif(1)*100),".csv",  sep='')
+  con = file(f, "w", encoding="MACROMAN")
   write.csv(d, con)
-  system("open -a 'Microsoft Excel' /tmp/tmp.csv")
+  system(paste("open -a 'Microsoft Excel' ",f, sep=''))
   close(con)
 }
 
@@ -479,10 +482,11 @@ util$ppy <- function(x, column.major=FALSE, ...) {
 }
 
 util$newwin <- function(x) {
-  capture.output(print(x),file="/tmp/tmp.txt")
+  f = paste("/tmp/tmp.", round(runif(1)*100),".txt",  sep='')
+  capture.output(print(x),file=f)
   # system("FILE_TO_VIEW=/tmp/tmp.txt /Applications/Utilities/Terminal.app/Contents/MacOS/Terminal /users/brendano/sw/bin/lame_viewer.sh")
   # system("DISPLAY=:0 /usr/X11R6/bin/xterm -geometry 80x60 -e less /tmp/tmp.txt &")
-  system("mate /tmp/tmp.txt &")
+  system(paste("mate ",f," &", sep=''))
 }
 
 

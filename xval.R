@@ -76,15 +76,17 @@ dlanalysis$xval_preds <- function(a,u, splits=NULL, model_fn=fit_anno_model, pre
   models = list()
   units = list()
   all_est = data.frame(row.names=row.names(u))
+  cat(ncol(splits),"-fold: ", sep='')
   for (k in 1:ncol(splits)) {
+    cat(k,"")
     s = splits[,k]
-    m = model_fn(a[ s$atrain, ], u, ...)
-    # m<<-m
-    est = pred_fn(m,a,u)
+    # print(s)
+    m = model_fn(a[ s$atrain, ], ...)
+    est = pred_fn(m,a)
     if (k==1)  {
       all_est[,names(est)] = NA
-      if (a@data_type=='categ')
-        all_est$label = factor(all_est, levels=a@candidates)
+      # if (a@data_type=='categ')
+      all_est$label = factor(all_est, levels=a@candidates)
     }
     all_est[s$test,] = est[s$test,]
     
@@ -93,14 +95,8 @@ dlanalysis$xval_preds <- function(a,u, splits=NULL, model_fn=fit_anno_model, pre
     
     # cat(sprintf("fold %2d: PLURALITY: %.3f  CALIB: %.3f\n", k, mean(u$plurality[s$test] == u$gold[s$test]), mean(est$label[s$test] == u$gold[s$test])))
     
-  }
-  # ret = list(
-  #   post = all_est,
-  #   models = models, splits=splits, units=units
-  # )
-  # class(ret) = 'xval_results'
-  # ret
-  
+  }  
+  cat("\n")
   all_est
 }
 
@@ -113,7 +109,7 @@ dlanalysis$print.xval_results <- function(r) {
 
 
 
-dlanalysis$new_xval <- function(a,u, size=5, replications=10, ...) {
+dlanalysis$new_xval <- function(a,u, size=2, replications=40, ...) {
   N = 10
   replications = min(choose(N,size),replications)
   combo_matrix = combn(N, size)
@@ -146,5 +142,28 @@ dlanalysis$new_xval <- function(a,u, size=5, replications=10, ...) {
     list(calib=mean(x$calib), raw=mean(x$raw))
   })
 }
+
+
+dlanalysis$xval3000 <- function(a, test_groups=levels(a$orig_id), ...) {
+  dfapply(test_groups, function(uid) {
+    test_b = which(a$orig_id %in% uid)
+    workers = unique(a$X.amt_w[ test_b ])
+    atrain = trim_levels(a[a$X.amt_w %in% workers & !(a$orig_id %in% uid),])
+    # atrain = trim_levels(a[-test_b,])
+    cat("HERE 1\n")
+    m = fit_anno_model(atrain)                             #, name='fitmodel')
+    cat("HERE 2 \n")
+    p = label_posterior(m, trim_levels(a[test_b,]), ...) #, name='post')
+    cat("HERE 3 \n")
+    if (a@data_type=='numeric')
+      list(calib=p$mean, raw=mean(a$response[test_b]))
+    else
+      # TODO random ties for even numbered levels!!
+      list(calib=p$label, raw=agg_to_unit(a)$plurality)
+  })
+}
+
+
+# dlanalysis$
 
 
