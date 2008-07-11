@@ -36,9 +36,15 @@ util$unwhich <- function(indices, len=length(indices)) {
 
 util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
 
+util$nna <- function(...) !is.na(...)   # i type this a lot, i think its worth 3 characters + shift key
+
+# hm: unitnorm and rescale are both subsumed in reshape:rescaler
+
 util$unitnorm <- function(x, na.rm=FALSE, ...)  (x - mean(x,na.rm=na.rm,...)) / sd(x,na.rm=na.rm)
 
 util$renorm <- function(x, mean=0, sd=1, ...)  (unitnorm(x,...) * sd) + mean
+
+util$rescale <- function(x, bounds=range(x))  (x-bounds[1]) / (bounds[2]-bounds[1])
 
 util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
 
@@ -145,7 +151,7 @@ util$fill_bool <- function(bool, true='yes', false='no') {
 }
 
 util$trmap <- function(vec, translation_table) {
-  # like unix "tr"
+  # pre-obsoleted by chartr() ?  like unix "tr"
   ret = rep(NA, length(vec))
   for (x in names(translation_table))
     ret[as.c(vec)==x] = translation_table[[x]]
@@ -163,7 +169,7 @@ util$ngrep <- function(pat,x, ...)
   x[grep(pat,x,...)]
 
 util$tapply2 <- function(x, ...) {
-  # slightly nicer than tapply for some reason, i dont remember
+  # like tapply but preserves factors
   if (is.factor(x)) {
     r = factor(tapply(as.character(x), ...), levels=levels(x))
   } else {
@@ -180,10 +186,9 @@ util$inject <- function(collection, start, fn) {
   acc
 }
 
-
 util$select <- function(collection, fn) {
-  # nice for lists.  not useful for vectors, just use boolean vector indexing.
-  # (named after ruby)
+  # like lisp filter.  (named after ruby)
+  # nice for lists.  not useful for vectors, use boolean vector indexing instead.
   r = c()
   for (x in collection)
     if (fn(x))
@@ -219,12 +224,12 @@ util$multi_xprod <- function(args) {
   lapply(ret, function(x)  x[2:length(x)])
 }
 
-# routines to help manage longrunning jobs.
+# routines to help manage longrunning jobs and optimize performance.
 # so much more potential here...
 
 util$timeit <- function(expr, name=NULL) {
   # print how long the expression takes, and return its value too.  
-  # So you can interpose   timeit({ blabla })   around and chunk of code "blabla".
+  # So you can interpose   timeit({ blabla })   around any chunk of code "blabla".
   start = Sys.time()
   ret = eval(expr)
   finish = Sys.time()
@@ -243,14 +248,17 @@ util$dotprogress <- function(callback, interval=10) {
   })
 }
 
+######
+#
 # dataframe-outputting apply and aggregation functions.
 # i'm often confused whether proper R style should emphasize matrices or dataframes.
 # so here's some support for a dataframe-centric lifestyle.
+# UPDATE? dfagg(), df2matrix() obsolete? just discovered had.co.nz/reshape
 
-# like sapply/lapply except it expects fn() to yield lists.
-# each list gets coerced into a single row of a returned dataframe.
 
 util$dfapply <- function(collection, fn) {
+  # like sapply/lapply except it expects fn() to yield lists.
+  # each list gets coerced into a single row of a returned dataframe.
   r = sapply(collection, fn)
   r = base::t(r)
   # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
@@ -262,36 +270,6 @@ util$dfapply <- function(collection, fn) {
   row.names(r) = collection
   r
 }
-
-# sapply() with fn() yielding lists returns a matrix with named rows/cols ... 
-# and whenever you name-index into this thing it return a list ... yuck
-# make that shit more normal.
-
-util$matrix2df <- function(x) {
-  if (class(x) != 'matrix') stop("why is class ",class(x))
-  colnames = dimnames(x)[[2]]
-  if (nrow(x) > 1)
-    data.frame(
-      sapply(colnames, function(n) unlist(x[,n])),
-      row.names=row.names(x))
-  else
-    # because sapply returns a named vector in this case...
-    data.frame(
-      t(sapply(colnames, function(n) unlist(x[,n]))),
-      row.names=row.names(x))
-}
-
-util$kill_df_lists <- function(d) {
-  # if you have internal lists inside your dataframe.  if you always use
-  # matrix2df this should never happen.  but sometimes it does.  yikes!  
-  for(n in names(d))
-    if (is.list(d[,n]))
-      d[,n] = list2v(d[,n])
-  d
-}
-
-util$list2v <- function(x)  sapply(x, I)    # turns list's values into a vector.  index names are dropped.
-
 
 util$df2matrix <- function(d, bycols, targetcol, 
       targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
@@ -351,10 +329,9 @@ util$df2matrix <- function(d, bycols, targetcol,
   m
 }
 
-
 util$dfagg <- function(d, byvals, fn, trim=TRUE) {
   # like by() but usually returns dataframes:
-  #    if fn() returns a list, a data frame is returned.  
+  #    if fn() returns a list, a data frame is returned.
   #      -> byvals are the row names.
   #      -> each list is coerced into a row.
   #    if fn() returns a nonlist, a vector is returned.
@@ -406,6 +383,34 @@ util$list2df <- function(ls) {
   }
   ret
 }
+
+util$matrix2df <- function(x) {
+  # sapply() with fn() yielding lists returns a matrix with named rows/cols ... 
+  # and whenever you name-index into this thing it return a list ... yuck
+  # make that shit more normal.
+  if (class(x) != 'matrix') stop("why is class ",class(x))
+  colnames = dimnames(x)[[2]]
+  if (nrow(x) > 1)
+    data.frame(
+      sapply(colnames, function(n) unlist(x[,n])),
+      row.names=row.names(x))
+  else
+    # because sapply returns a named vector in this case...
+    data.frame(
+      t(sapply(colnames, function(n) unlist(x[,n]))),
+      row.names=row.names(x))
+}
+
+util$kill_df_lists <- function(d) {
+  # if you have internal lists inside your dataframe.  if you always use
+  # matrix2df this should never happen.  but sometimes it does.  yikes!  
+  for(n in names(d))
+    if (is.list(d[,n]))
+      d[,n] = list2v(d[,n])
+  d
+}
+
+util$list2v <- function(x)  sapply(x, I)    # turns list's values into a vector.  index names are dropped.  pre-obsoleted by unlist() ?
 
 util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, ...) {
   # Wrapper around merge().  turns out this is not needed because i didnt 
