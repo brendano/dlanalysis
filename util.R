@@ -34,7 +34,25 @@ util$unwhich <- function(indices, len=length(indices)) {
   ret
 }
 
-util$table.freq <- function(x, ...)  table(x, ...) / sum(table(x, ...))
+util$table.freq <- function(...)  table(...) / sum(table(...))
+
+util$table.square <- function(x,y, ..., values=unique(c(x,y))) {
+  for (i in 1:length(values))  for (j in 1:length(values)) {
+    x = c(x, values[i]);  y = c(y, values[j])
+  }
+  legit_inds = as.c(x) %in% values  &  as.c(y) %in% values
+  t = table(x[legit_inds], y[legit_inds], ...)
+  # print(t)
+  t = t - 1
+  t
+}
+util$table.cond <- function(...) {
+  # P(x|y...)
+  t = table(...)
+  for (x1 in 1:nrow(t))
+    t[x1,] = t[x1,] / sum(t[x1,])
+  t
+}
 
 util$nna <- function(...) !is.na(...)   # i type this a lot, i think its worth 3 characters + shift key
 
@@ -106,6 +124,8 @@ util$p2o <- function(p)  p / (1-p)    # probability -> odds ratio
 util$o2p <- function(o)  o / (1+o)    # odds ratio  -> probability
 util$lo2p <-function(lo) o2p(2^lo)
 util$p2lo <-function(p) log2(p2o(p))  # i like base-2 logits best.
+util$lno2p <-function(lo) o2p(exp(lo))
+util$p2lno <-function(p) log(p2o(p))
 
 util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
   # http://tolstoy.newcastle.edu.au/R/devel/04/11/1469.html

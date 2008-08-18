@@ -28,6 +28,7 @@ dlanalysis$mygeneric <- function(orig_fname, whicharg=1) {
 source("~/dlanalysis/workers.R")
 source("~/dlanalysis/workers_categ.R")
 source("~/dlanalysis/xval.R")
+source("~/dlanalysis/newamt.R")
 
 dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
   a = read.delim(filename, colClasses=list(response='factor',gold='factor',orig_id='factor'), sep=sep, ...)

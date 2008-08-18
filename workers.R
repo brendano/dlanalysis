@@ -1,7 +1,7 @@
 dlanalysis$worker_an = function(a, labels=NULL, labels_long=a$gold, 
   trim_workers=FALSE, trim_units=TRUE, ...)
 {
-  worker_ids = a$X.amt_worker_ids 
+  worker_ids = a$WorkerId 
   if (trim_workers)  worker_ids = trim_levels(worker_ids)
   if (trim_units)  a$orig_id = trim_levels(a$orig_id)
 
@@ -85,7 +85,7 @@ dlanalysis$label_posterior.numeric <- function(model, a, u=NULL, no_priors=TRUE,
 }
 
 dlanalysis$posterior_given_workers.numeric <- function(w, a, use='cm') {
-  aw = merge(a,w, by.x='X.amt_worker_ids', by.y=0)
+  aw = merge(a,w, by.x='WorkerId', by.y=0)
   posterior = dfagg(aw, aw$orig_id, function(x) {
     if (use=='lm') {
       list(
@@ -126,16 +126,16 @@ dlanalysis$posterior_given_workers.numeric <- function(w, a, use='cm') {
 dlanalysis$merge_worker_tail <- function(a, cutoff=20) {
   w = worker_an(a)
   tail_workers = row.names(w)[ w$num <= cutoff ]
-  a$X.amt_worker_ids = factor(a$X.amt_worker_ids, levels=c('mr_tail', levels(a$X.amt_w)))
-  a[a$X.amt_worker_ids %in% tail_workers, 'X.amt_worker_ids'] = 'mr_tail'
-  a$X.amt_worker_ids = trim_levels(a$X.amt_worker_ids)
+  a$WorkerId = factor(a$WorkerId, levels=c('mr_tail', levels(a$X.amt_w)))
+  a[a$WorkerId %in% tail_workers, 'WorkerId'] = 'mr_tail'
+  a$WorkerId = trim_levels(a$WorkerId)
   a
 }
 
 
 
 dlanalysis$worker_unit_plot <- function(a, nbreaks=10, reorder=FALSE, ...) {
-  m = df2matrix(a,c('X.amt_worker_ids','orig_id'),'response')
+  m = df2matrix(a,c('WorkerId','orig_id'),'response')
   w_first_j = dfagg(a,a$X.amt_w,function(x) mean(as.integer(x$orig_id)))
   m = m[order(w_first_j),]
   
@@ -162,7 +162,7 @@ dlanalysis$worker_unit_plot <- function(a, nbreaks=10, reorder=FALSE, ...) {
 
 
 dlanalysis$worker_numeric_model_plot1 <- function(a) {
-  xyplot(response ~ gold | X.amt_worker_ids, data=a, auto.key=T, 
+  xyplot(response ~ gold | WorkerId, data=a, auto.key=T, 
     panel=function(x,y, subscripts,...) { 
       panel.xyplot(x,y,subscripts=subscripts,...)
       m = lm(y~x)
@@ -185,7 +185,7 @@ dlanalysis$worker_numeric_model_plot1 <- function(a) {
 
 
 dlanalysis$worker_numeric_model_plot2 <- function(a,  est) {
-  xyplot(response ~ gold | X.amt_worker_ids*task, data=a, auto.key=T, 
+  xyplot(response ~ gold | WorkerId*task, data=a, auto.key=T, 
     panel=function(x,y, subscripts,...) { 
       panel.xyplot(x,y,subscripts=subscripts,...)
       m = lm(y~x)
@@ -214,7 +214,7 @@ dlanalysis$worker_numeric_model_plot2 <- function(a,  est) {
 
 dlanalysis$worker_numeric_model_plot3 <- function(a,  atest=rep(FALSE,nrow(a))) {
   x=data.frame(a,atest=atest)
-  xyplot(response~gold|X.amt_worker_ids, data=x, groups=atest,auto.key=T, 
+  xyplot(response~gold|WorkerId, data=x, groups=atest,auto.key=T, 
     panel=function(x,y, subscripts, groups,...) { 
       panel.xyplot(x,y,subscripts=subscripts,groups=groups,...)
       train=!groups[subscripts]

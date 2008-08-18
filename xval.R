@@ -150,11 +150,8 @@ dlanalysis$xval3000 <- function(a, test_groups=levels(a$orig_id), ...) {
     workers = unique(a$X.amt_w[ test_b ])
     atrain = trim_levels(a[a$X.amt_w %in% workers & !(a$orig_id %in% uid),])
     # atrain = trim_levels(a[-test_b,])
-    cat("HERE 1\n")
     m = fit_anno_model(atrain)                             #, name='fitmodel')
-    cat("HERE 2 \n")
     p = label_posterior(m, trim_levels(a[test_b,]), ...) #, name='post')
-    cat("HERE 3 \n")
     if (a@data_type=='numeric')
       list(calib=p$mean, raw=mean(a$response[test_b]))
     else
