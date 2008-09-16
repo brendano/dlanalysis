@@ -36,7 +36,9 @@ util$unwhich <- function(indices, len=length(indices)) {
 
 util$table.freq <- function(...)  table(...) / sum(table(...))
 
-util$table.square <- function(x,y, ..., values=unique(c(x,y))) {
+util$table.square <- function(x,y, ..., values=unique(c(as.c(x),as.c(y)))) {
+  # intended for factor data
+  x=as.c(x); y=as.c(y)
   for (i in 1:length(values))  for (j in 1:length(values)) {
     x = c(x, values[i]);  y = c(y, values[j])
   }

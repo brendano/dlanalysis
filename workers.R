@@ -13,6 +13,8 @@ dlanalysis$worker_an = function(a, labels=NULL, labels_long=a$gold,
     stop("need labels somehow")
   }
   
+  # a1<<-a
+  # print(head(a))
   fn = dlanalysis$mygeneric('worker_an')
   fn(a, worker_ids, ...)
 } 
@@ -80,7 +82,6 @@ dlanalysis$label_posterior.numeric <- function(model, a, u=NULL, no_priors=TRUE,
     w1 = p$worker_weight;  w2 = 1/model$prior_sd^2 
     p$mean = 1/(w1+w2) * (w1*p$mean  +  w2*model$prior_mean)    
   }
-  
   p
 }
 
@@ -126,7 +127,7 @@ dlanalysis$posterior_given_workers.numeric <- function(w, a, use='cm') {
 dlanalysis$merge_worker_tail <- function(a, cutoff=20) {
   w = worker_an(a)
   tail_workers = row.names(w)[ w$num <= cutoff ]
-  a$WorkerId = factor(a$WorkerId, levels=c('mr_tail', levels(a$X.amt_w)))
+  a$WorkerId = factor(a$WorkerId, levels=c('mr_tail', levels(a$WorkerId)))
   a[a$WorkerId %in% tail_workers, 'WorkerId'] = 'mr_tail'
   a$WorkerId = trim_levels(a$WorkerId)
   a
@@ -136,7 +137,7 @@ dlanalysis$merge_worker_tail <- function(a, cutoff=20) {
 
 dlanalysis$worker_unit_plot <- function(a, nbreaks=10, reorder=FALSE, ...) {
   m = df2matrix(a,c('WorkerId','orig_id'),'response')
-  w_first_j = dfagg(a,a$X.amt_w,function(x) mean(as.integer(x$orig_id)))
+  w_first_j = dfagg(a,a$WorkerId,function(x) mean(as.integer(x$orig_id)))
   m = m[order(w_first_j),]
   
   if (a@data_type=='numeric') {

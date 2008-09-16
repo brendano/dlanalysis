@@ -32,6 +32,11 @@ source("~/dlanalysis/newamt.R")
 
 dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
   a = read.delim(filename, colClasses=list(response='factor',gold='factor',orig_id='factor'), sep=sep, ...)
+  if ('X.amt_worker_ids' %in% names(a)) {
+    a = data.frame(WorkerId=a[,'X.amt_worker_ids'], a)
+    a[,'X.amt_worker_ids'] = NULL
+  }
+  print(head(a))
   attr(a,'data_type') = 'categ'
   if ( ! setequal(levels(a$response), levels(a$gold)))
     stop("Uhoh, levels of response and gold are not the same.  need to hack up this code here")
@@ -53,7 +58,7 @@ dlanalysis$load_numeric_anno <- function(filename, sep="\t", ...) {
 }
 
 dlanalysis$trim_levels.anno <- function(a) {
-  a$X.amt_worker_ids =  trim_levels(a$X.amt_worker_ids)
+  a$WorkerId =  trim_levels(a$WorkerId)
   a$orig_id = trim_levels(a$orig_id)
   a
 }
@@ -76,6 +81,22 @@ dlanalysis$anno_sample_simple <- function(a, limit=5) {
   trim_levels(a[mask,])
 }
 
+dlanalysis$anno_sample_ragged <- function(a, limit=3) {
+  # like above but no fixed N
+  # mask = rep(F, nrow(a))
+  mask = shuffle(  c(rep(F, floor(nrow(a)/2)), rep(T, ceiling(nrow(a)/2)))  )
+  for (u in levels(a$orig_id)) {
+    rows = which(a$orig_id==u)
+    if (limit <= length(rows)) {
+      keep = sample(rows, limit)
+      mask[keep] = TRUE
+    } else {
+      mask[rows] = TRUE
+    }
+  }
+  a[mask,]
+}
+
 dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
   # simulates workers coming to the task and doing as much as they want.
   # order of workers is random. we take all anons the worker did in real life, 
@@ -83,7 +104,7 @@ dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
   # distribution, though the overflow discarding has some sort of weird effect --
   # tail workers tend to drop less than head workers, maybe?
     
-  worker_random_order = shuffle(unique(a$X.amt_worker_ids))
+  worker_random_order = shuffle(unique(a$WorkerId))
   orig_id = trim_levels(a$orig_id)
   per_unit_inds = rep(1, nlevels(orig_id))
   names(per_unit_inds) = levels(orig_id)
@@ -93,7 +114,7 @@ dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
   
         # timeit({
   for (worker in as.c(worker_random_order)) {
-    units_worker_did = unique(orig_id[a$X.amt_worker_ids==worker])
+    units_worker_did = unique(orig_id[a$WorkerId==worker])
     for (uname in units_worker_did) {
       mat[uname, per_unit_inds[uname]] = worker
     }
@@ -109,13 +130,13 @@ dlanalysis$anno_sample_via_workers <- function(a, limit=999) {
   # .21 => .15 seconds on switching to numeric indices
   inds_from_a = matrix(0, nlevels(orig_id), limit)
   for (unit in 1:nlevels(orig_id)) {
-    inds = which(  as.integer(orig_id)==unit  &  a$X.amt_worker_id %in% mat[unit,]  )
+    inds = which(  as.integer(orig_id)==unit  &  a$WorkerId %in% mat[unit,]  )
     inds_from_a[unit,] = inds
   }
   # slower version
   # inds_from_a = matrix(0, nlevels(orig_id), limit, dimnames=list(levels(orig_id),NULL))
   # for (uname in levels(orig_id)) {
-  #   inds = which(  orig_id==uname  &  a$X.amt_worker_id %in% mat[uname,]  )
+  #   inds = which(  orig_id==uname  &  a$WorkerId %in% mat[uname,]  )
   #   inds_from_a[uname,] = inds
   # }
         # })

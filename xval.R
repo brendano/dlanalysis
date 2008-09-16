@@ -109,46 +109,46 @@ dlanalysis$print.xval_results <- function(r) {
 
 
 
-dlanalysis$new_xval <- function(a,u, size=2, replications=40, ...) {
-  N = 10
-  replications = min(choose(N,size),replications)
-  combo_matrix = combn(N, size)
-  combos = sample(1:choose(N,size), replications)
-  msg("Replications=",replications," on combinations=",choose(N,size))
-  dfapply(levels(a$orig_id), function(uid) {
-    inds = shuffle(which(a$orig_id==uid))
-    # supermodel = fit_anno_model(a[a$orig_id!=uid,])
-    x = dfapply(1:replications, function(i) {
-      
-      workers = a$X.amt_w[ inds[combo_matrix[,i]] ]
-      atrain = trim_levels(a[a$X.amt_w %in% workers & a$orig_id != uid,])
-      # print(atrain)
-      m = fit_anno_model(atrain)
-      # m = fit_anno_model(atrain, prior_mean=supermodel$prior_mean, prior_sd=supermodel$prior_sd)
-      # print(m)
-      p = label_posterior(m, trim_levels(a[a$orig_id==uid,]),
-            ...)
-      # print(p)
-      list(calib=p$mean, raw=-42)
-      # list(calib=p$mean, raw=a$response[inds[combo_matrix[,i]]])
-      # list(calib=runif(1), raw=mean(a$response[inds[combo_matrix[,i]]]))
-    })
-    cat(sprintf("%s: gold %3s  full %.1_4f  calib %.1_4f  raw %.1_4f  ::  %s  ::  [CI %s]\n", 
-        uid, u[uid,'gold'], u[uid,'mean_response'], mean(x$calib), mean(x$raw), 
-        if(nrow(x)<=10) paste(sprintf("%.1_4f",sort(x$calib)),collapse=' ') else "", 
-        paste( sprintf("%.1_4f",try(t.test(x$calib)$conf.int)), collapse=' ')
-    ))
-
-    list(calib=mean(x$calib), raw=mean(x$raw))
-  })
-}
+# dlanalysis$new_xval <- function(a,u, size=2, replications=40, ...) {
+#   N = 10
+#   replications = min(choose(N,size),replications)
+#   combo_matrix = combn(N, size)
+#   combos = sample(1:choose(N,size), replications)
+#   msg("Replications=",replications," on combinations=",choose(N,size))
+#   dfapply(levels(a$orig_id), function(uid) {
+#     inds = shuffle(which(a$orig_id==uid))
+#     # supermodel = fit_anno_model(a[a$orig_id!=uid,])
+#     x = dfapply(1:replications, function(i) {
+#       
+#       workers = a$WorkerId[ inds[combo_matrix[,i]] ]
+#       atrain = trim_levels(a[a$WorkerId %in% workers & a$orig_id != uid,])
+#       # print(atrain)
+#       m = fit_anno_model(atrain)
+#       # m = fit_anno_model(atrain, prior_mean=supermodel$prior_mean, prior_sd=supermodel$prior_sd)
+#       # print(m)
+#       p = label_posterior(m, trim_levels(a[a$orig_id==uid,]),
+#             ...)
+#       # print(p)
+#       list(calib=p$mean, raw=-42)
+#       # list(calib=p$mean, raw=a$response[inds[combo_matrix[,i]]])
+#       # list(calib=runif(1), raw=mean(a$response[inds[combo_matrix[,i]]]))
+#     })
+#     cat(sprintf("%s: gold %3s  full %.1_4f  calib %.1_4f  raw %.1_4f  ::  %s  ::  [CI %s]\n", 
+#         uid, u[uid,'gold'], u[uid,'mean_response'], mean(x$calib), mean(x$raw), 
+#         if(nrow(x)<=10) paste(sprintf("%.1_4f",sort(x$calib)),collapse=' ') else "", 
+#         paste( sprintf("%.1_4f",try(t.test(x$calib)$conf.int)), collapse=' ')
+#     ))
+# 
+#     list(calib=mean(x$calib), raw=mean(x$raw))
+#   })
+# }
 
 
 dlanalysis$xval3000 <- function(a, test_groups=levels(a$orig_id), ...) {
   dfapply(test_groups, function(uid) {
     test_b = which(a$orig_id %in% uid)
-    workers = unique(a$X.amt_w[ test_b ])
-    atrain = trim_levels(a[a$X.amt_w %in% workers & !(a$orig_id %in% uid),])
+    workers = unique(a$WorkerId[ test_b ])
+    atrain = trim_levels(a[a$WorkerId %in% workers & !(a$orig_id %in% uid),])
     # atrain = trim_levels(a[-test_b,])
     m = fit_anno_model(atrain)                             #, name='fitmodel')
     p = label_posterior(m, trim_levels(a[test_b,]), ...) #, name='post')

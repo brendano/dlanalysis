@@ -35,7 +35,7 @@ dlanalysis$worker_an.categ <- function(a, worker_ids,
   zero_table = matrix(0, length(cs),length(cs), dimnames=list(response=cs,label=cs))
   
   if (head_thresh > 0) {
-    j_mass = cumsum(sort(table(a$X.amt_w),decreasing=T))
+    j_mass = cumsum(sort(table(a$WorkerId),decreasing=T))
     top_mass = j_mass[j_mass < head_thresh * nrow(a)]
     worker_restrict_list = names(top_mass)
   }
@@ -66,14 +66,15 @@ dlanalysis$worker_an.categ <- function(a, worker_ids,
   # print("here")
   for (pred in candidates) {
     for (real in reals_for_pred(pred)) {
+      notreal = setdiff(candidates,real)
+      # cat(pred, " -- ", real, "\n")
+      # print(notreal)
       
       # log likelihood ratios
       if (llrs) {
         name = llr_name(pred,real)
-        cat(pred, " -- ", real, "\n")
-        wi <<- worker_info
-        worker_info[,name] = (x <<- sapply(worker_confusions, function(t) {
-          notreal = setdiff(candidates,real)
+        # wi <<- worker_info
+        worker_info[,name] = (sapply(worker_confusions, function(t) {
           t = t + pseudocounts
           log2(t[pred,real] / sum(t[pred,notreal]))
         }))
@@ -282,6 +283,7 @@ dlanalysis$posterior_given_workers1.categ <- function(w, a,
 }
 
 dlanalysis$worker_em <- function(a, iterations=10, w=uniform_worker_an(a), labels=NULL, ...) {
+  # not really EM
   if (is.null(labels))
     labels = label_posterior(list(w=w), a)
   ret = list(..., history=list(list(w=w,labels=labels)))
