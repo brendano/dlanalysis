@@ -14,6 +14,7 @@ class DataFrame(list):
   def __getattr__(self, attr):
     return self[attr]
 
+
 class Counter:
   """ Usages
   
@@ -50,7 +51,9 @@ class Counter:
     self.out = sys.stdout
     self.need_restart = True
   
-  def start(self, max=None, name="iter"):
+  def start(self, bla=None, name="iter", max=None):
+    if type(bla)==str: name=bla
+    if type(bla)==int: max=bla
     self.count = 0
     self.name = name
     self.max = max
@@ -78,13 +81,13 @@ class Counter:
     self.out.flush()
     self.need_restart = True
   
-  def __call__(self, iterator, **kwds):
+  def __call__(self, iterator, *args, **kwds):
     if 'max' not in kwds and hasattr(iterator, '__len__'):
       kwds['max'] = len(iterator)
-    self.start(**kwds)
+    self.start(*args, **kwds)
     for x in iterator:
-      yield x
       self.next()
+      yield x
     self.end()
     
     
@@ -126,7 +129,6 @@ counter = Counter()
 
 def smart_fmt(x, space=False):
   def fmt1():
-    is_neg = x < 0
     d = int((math.log10(abs(x))))
     if x >= 1:
       shelf = 3 * (d//3)
