@@ -12,6 +12,187 @@ if (system("stty -a &>/dev/null") == 0)
 
 util = new.env()
 
+######
+#
+# dataframe-outputting apply and aggregation functions.
+#  dfagg, dfapply, df2matrix, matrix2df
+# i'm often confused whether proper R style should emphasize matrices or dataframes.
+# so these support for a dataframe-centric lifestyle.
+
+
+util$dfagg <- function(d, byvals, fn, trim=TRUE) {
+  # like by() but usually returns dataframes:
+  #    if fn() returns a list, a data frame is returned.
+  #      -> byvals are the row names.
+  #      -> each list is coerced into a row.
+  #    if fn() returns a nonlist, a vector is returned.
+  #      -> byvals are the names.
+  # We attempt to be tolerant for slight inconsistencies in fn()'s return values.
+  #
+  # Goal is to be like SQL GROUP BY: dataframes in, aggregated dataframes out.
+  #
+  # If you have a multidimensional matrix (R calls "array"), apply() lets you 
+  # select the margin for rollup in a similar way.
+
+  if (class(byvals) == 'function')
+    byvals = byvals(d)
+  if (trim && is.factor(byvals) && !setequal( present_levels(byvals), levels(byvals)) ) {
+    # change to "stop" to find if necessary
+    warning("Uhoh, byvals is a factor but only using only a subset of its levels.  Trimming them.  Hopefully this is what you want.")
+    byvals = trim_levels(byvals)
+  }
+
+  b = by(d, byvals, fn)
+  list2df(b)
+}
+
+util$list2df <- function(ls) {
+  # Wants a list of lists, each of which has the same set named indexes.
+  # Outputs a dataframe where said indexes are the column names.
+  # Is tolerant for slight inconsistencies of present indexes.
+  # Transfers list index names to dataframe rownames.
+  
+  b=ls
+  cols = NULL
+  for (i in 1:min(100,length(b))) {
+    cols = c(cols, try(names(b[[i]])))
+  }
+  cols = unique(cols)
+
+  ret = data.frame(row.names=names(b))
+
+  for (col in cols) {
+    ret[,col] = sapply(names(b), function(k) {
+      if (is.null(b[[k]]))  NA
+      else if (!is.null(names(b[[k]])))  b[[k]][[col]]
+      else if (length(b[[k]])==1 && is.na(b[[k]]))  NA
+      else stop("dont know what to do with value ",b[[k]])
+    })
+  }
+  if (length(cols) == 0) {
+    return(sapply(names(b), function(k) b[[k]]))
+  }
+  ret
+}
+
+util$matrix2df <- function(x) {
+  # sapply() with fn() yielding lists returns a matrix with named rows/cols ... 
+  # and whenever you name-index into this thing it return a list ... yuck
+  # make that shit more normal.
+  if (class(x) != 'matrix') stop("why is class ",class(x))
+  colnames = dimnames(x)[[2]]
+  if (nrow(x) > 1)
+    data.frame(
+      sapply(colnames, function(n) unlist(x[,n])),
+      row.names=row.names(x))
+  else
+    # because sapply returns a named vector in this case...
+    data.frame(
+      t(sapply(colnames, function(n) unlist(x[,n]))),
+      row.names=row.names(x))
+}
+
+util$dfapply <- function(collection, fn) {
+  # like sapply/lapply except it expects fn() to yield lists.
+  # each list gets coerced into a single row of a returned dataframe.
+  r = sapply(collection, fn)
+  r = base::t(r)
+  # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
+  if (length(unique(dimnames(r)[[2]])) == 1) {
+    r = base::t(r)
+    dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
+  }
+  r = matrix2df(r)
+  row.names(r) = collection
+  r
+}
+
+
+util$df2matrix <- function(d, bycols, targetcol, 
+      targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
+{
+  # for df's that essentially store sparse matrices.  make a real matrix via 
+  # by()-like conditioning on multiple columns ... a contingency table.
+  # Design goal: inspired by table(), which does the same thing, except cells are always counts.
+  #
+  # This is *NOT* the inverse of matrix2df !  would be good to change naming.
+  #
+  # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size": 
+  # > head(d)
+  #   size           ps  t acc
+  # 1    2 0.0009765625 -1 668
+  # 2    2 0.0009765625  0 668
+  # 3    2 0.0009765625 20 670
+  # 4    2 0.0009765625 50 664
+  # 
+  # you do:
+  # > df2matrix(head(d), c('ps','t'), 'acc', mean)
+  #               -1   0  20  50
+  # 0.0009765625 668 668 670 664
+  # 0.5          668 668  NA  NA
+  #
+  # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
+
+  for (j in 1:length(bycols))
+    d[,bycols[j]] = factor(d[,bycols[j]])
+
+  the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
+
+  # the by() cascade:
+  # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
+  #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
+  # so recursively build that linked list of closures, from right to left.
+  by_cascade = list()
+  by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
+  
+  for (j in length(bycols):1) {
+    by_cascade[[j]] = with(list(j=j),
+      function(x) {
+        by(x, x[,bycols[j]], by_cascade[[j+1]])
+      }
+    )
+  }
+
+  b = by_cascade[[1]](d)
+  m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
+
+  # simplest and slowest: dont use any margins for assignments.
+  # yes, this would be extremely speedy in c++
+  all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
+  for (i in 1:length(all_spots)) {
+    inds = all_spots[[i]]
+    m[t(inds)] = b[[inds]]
+  }
+  m
+}
+
+util$kill_df_lists <- function(d) {
+  # if you have internal lists inside your dataframe.  if you always use
+  # matrix2df this should never happen.  but sometimes it does.  yikes!  
+  for(n in names(d))
+    if (is.list(d[,n]))
+      d[,n] = list2v(d[,n])
+  d
+}
+
+util$flipleft <- function(x, named_vec, by) {
+  # Kinda dangerous but sometimes convenient: 
+  # Left join data frame `x` against named_vec, matching named_vec's names
+  # against a column in x.
+  # Returns the new column as a bare vector, same height as x.
+  if (is.null(names(named_vec))) {
+    stopifnot(length(named_vec) == nlevels(x[,by]))
+    names(named_vec) = levels(x[,by])    
+  }
+  y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
+  x$ze_orig_order = 1:nrow(x)  
+  merged = merge(x,y, by.x=by, by.y=0, all.x=T, all.y=F)
+
+  merged$ze_y_value[order( merged$ze_orig_order )]
+}
+
+#######
+
 util$msg <- function(...)  cat(..., "\n", file=stderr())
 
 util$strlen <- function(s)  length(strsplit(s,"")[[1]])
@@ -32,28 +213,6 @@ util$unwhich <- function(indices, len=length(indices)) {
   ret = rep(F,len)
   ret[indices] = T
   ret
-}
-
-util$table.freq <- function(...)  table(...) / sum(table(...))
-
-util$table.square <- function(x,y, ..., values=unique(c(as.c(x),as.c(y)))) {
-  # intended for factor data
-  x=as.c(x); y=as.c(y)
-  for (i in 1:length(values))  for (j in 1:length(values)) {
-    x = c(x, values[i]);  y = c(y, values[j])
-  }
-  legit_inds = as.c(x) %in% values  &  as.c(y) %in% values
-  t = table(x[legit_inds], y[legit_inds], ...)
-  # print(t)
-  t = t - 1
-  t
-}
-util$table.cond <- function(...) {
-  # P(x|y...)
-  t = table(...)
-  for (x1 in 1:nrow(t))
-    t[x1,] = t[x1,] / sum(t[x1,])
-  t
 }
 
 util$nna <- function(...) !is.na(...)   # i type this a lot, i think its worth 3 characters + shift key
@@ -89,9 +248,53 @@ util$trim_levels.data.frame <- function(x) {
 
 util$kill_names <- function(x) { names(x) = NULL; x }
 
+
+#  Variants on table()
+
+util$table.freq <- function(...)  table(...) / sum(table(...))
+
+util$table.square <- function(x,y, ..., values=unique(c(as.c(x),as.c(y)))) {
+  # intended for factor data
+  x=as.c(x); y=as.c(y)
+  for (i in 1:length(values))  for (j in 1:length(values)) {
+    x = c(x, values[i]);  y = c(y, values[j])
+  }
+  legit_inds = as.c(x) %in% values  &  as.c(y) %in% values
+  t = table(x[legit_inds], y[legit_inds], ...)
+  # print(t)
+  t = t - 1
+  t
+}
+
+util$table.cond <- function(...) {
+  # P(x|y...)
+  t = table(...)
+  for (x1 in 1:nrow(t))
+    t[x1,] = t[x1,] / sum(t[x1,])
+  t
+}
+
+util$table.range <- function(x, min=NULL, max=NULL) {
+  # like table(), but only for integers, and forces a contiguous range of bins
+  # so counts of 0 can appear.  Useful if you want to compare tables between
+  # different datasets.
+  if (is.null(min))  min = min(x)
+  if (is.null(max))  max = max(x)
+  x2 = rep(0, max-min+1)
+  t = table(x)
+  t_inds = as.integer(names(t))
+  t_mask = t_inds >= min  &  t_inds <= max
+  t_inds = t_inds[t_mask]
+  mask = t_inds - min + 1
+  x2[mask] = x2[mask] + t[t_mask]
+  names(x2) = min:max
+  x2
+}
+
+#  Tie breakers
+
 util$fair_gt <- function(x,y) {
   # breaks ties arbitrarily.  # of TRUE's should be halfway between > and >=.
-  
   ret = rep(NA, length(x))
   ret[x > y] = TRUE
   ret[x < y] = FALSE
@@ -270,217 +473,6 @@ util$dotprogress <- function(callback, interval=10) {
   })
 }
 
-######
-#
-# dataframe-outputting apply and aggregation functions.
-# i'm often confused whether proper R style should emphasize matrices or dataframes.
-# so here's some support for a dataframe-centric lifestyle.
-# UPDATE? dfagg(), df2matrix() obsolete? just discovered had.co.nz/reshape
-
-
-util$dfapply <- function(collection, fn) {
-  # like sapply/lapply except it expects fn() to yield lists.
-  # each list gets coerced into a single row of a returned dataframe.
-  r = sapply(collection, fn)
-  r = base::t(r)
-  # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
-  if (length(unique(dimnames(r)[[2]])) == 1) {
-    r = base::t(r)
-    dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
-  }
-  r = matrix2df(r)
-  row.names(r) = collection
-  r
-}
-
-util$df2matrix <- function(d, bycols, targetcol, 
-      targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
-{
-  # for df's that essentially store sparse matrices.  make a real matrix via 
-  # by()-like conditioning on multiple columns ... a contingency table.
-  # Design goal: inspired by table(), which does the same thing, except cells are always counts.
-  #
-  # This is *NOT* the inverse of matrix2df !  would be good to change naming.
-  #
-  # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size": 
-  # > head(d)
-  #   size           ps  t acc
-  # 1    2 0.0009765625 -1 668
-  # 2    2 0.0009765625  0 668
-  # 3    2 0.0009765625 20 670
-  # 4    2 0.0009765625 50 664
-  # 
-  # you do:
-  # > df2matrix(head(d), c('ps','t'), 'acc', mean)
-  #               -1   0  20  50
-  # 0.0009765625 668 668 670 664
-  # 0.5          668 668  NA  NA
-  #
-  # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
-
-  for (j in 1:length(bycols))
-    d[,bycols[j]] = factor(d[,bycols[j]])
-
-  the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
-
-  # the by() cascade:
-  # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
-  #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
-  # so recursively build that linked list of closures, from right to left.
-  by_cascade = list()
-  by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
-  
-  for (j in length(bycols):1) {
-    by_cascade[[j]] = with(list(j=j),
-      function(x) {
-        by(x, x[,bycols[j]], by_cascade[[j+1]])
-      }
-    )
-  }
-
-  b = by_cascade[[1]](d)
-  m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
-
-  # simplest and slowest: dont use any margins for assignments.
-  # yes, this would be extremely speedy in c++
-  all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
-  for (i in 1:length(all_spots)) {
-    inds = all_spots[[i]]
-    m[t(inds)] = b[[inds]]
-  }
-  m
-}
-
-util$dfagg <- function(d, byvals, fn, trim=TRUE) {
-  # like by() but usually returns dataframes:
-  #    if fn() returns a list, a data frame is returned.
-  #      -> byvals are the row names.
-  #      -> each list is coerced into a row.
-  #    if fn() returns a nonlist, a vector is returned.
-  #      -> byvals are the names.
-  # We attempt to be tolerant for slight inconsistencies in fn()'s return values.
-  #
-  # Goal is to be like SQL GROUP BY: dataframes in, aggregated dataframes out.
-  #
-  # If you have a multidimensional matrix (R calls "array"), apply() lets you 
-  # select the margin for rollup in a similar way.
-
-  if (class(byvals) == 'function')
-    byvals = byvals(d)
-  if (trim && is.factor(byvals) && !setequal( present_levels(byvals), levels(byvals)) ) {
-    # change to "stop" to find if necessary
-    warning("Uhoh, byvals is a factor but only using only a subset of its levels.  Trimming them.  Hopefully this is what you want.")
-    byvals = trim_levels(byvals)
-  }
-
-  b = by(d, byvals, fn)
-  list2df(b)
-}
-
-util$list2df <- function(ls) {
-  # Wants a list of lists, each of which has the same set named indexes.
-  # Outputs a dataframe where said indexes are the column names.
-  # Is tolerant for slight inconsistencies of present indexes.
-  # Transfers list index names to dataframe rownames.
-  
-  b=ls
-  cols = NULL
-  for (i in 1:min(100,length(b))) {
-    cols = c(cols, try(names(b[[i]])))
-  }
-  cols = unique(cols)
-
-  ret = data.frame(row.names=names(b))
-
-  for (col in cols) {
-    ret[,col] = sapply(names(b), function(k) {
-      if (is.null(b[[k]]))  NA
-      else if (!is.null(names(b[[k]])))  b[[k]][[col]]
-      else if (length(b[[k]])==1 && is.na(b[[k]]))  NA
-      else stop("dont know what to do with value ",b[[k]])
-    })
-  }
-  if (length(cols) == 0) {
-    return(sapply(names(b), function(k) b[[k]]))
-  }
-  ret
-}
-
-util$matrix2df <- function(x) {
-  # sapply() with fn() yielding lists returns a matrix with named rows/cols ... 
-  # and whenever you name-index into this thing it return a list ... yuck
-  # make that shit more normal.
-  if (class(x) != 'matrix') stop("why is class ",class(x))
-  colnames = dimnames(x)[[2]]
-  if (nrow(x) > 1)
-    data.frame(
-      sapply(colnames, function(n) unlist(x[,n])),
-      row.names=row.names(x))
-  else
-    # because sapply returns a named vector in this case...
-    data.frame(
-      t(sapply(colnames, function(n) unlist(x[,n]))),
-      row.names=row.names(x))
-}
-
-util$kill_df_lists <- function(d) {
-  # if you have internal lists inside your dataframe.  if you always use
-  # matrix2df this should never happen.  but sometimes it does.  yikes!  
-  for(n in names(d))
-    if (is.list(d[,n]))
-      d[,n] = list2v(d[,n])
-  d
-}
-
-util$list2v <- function(x)  sapply(x, I)    # turns list's values into a vector.  index names are dropped.  pre-obsoleted by unlist() ?
-
-util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, ...) {
-  # Wrapper around merge().  turns out this is not needed because i didnt 
-  # read merge()'s manual page carefully enough: it has a facility for
-  # joining on rownames.  merge() is great.
-    
-  if (row.x)  x[,by] = row.names(x)
-  if (row.y)  y[,by] = row.names(y)
-
-  ret = merge(x,y,by=by, suffixes=c('','.y'), ...)
-  if (row.x && nrow(ret)==nrow(x))  row.names(ret) = row.names(x)
-  if (row.y && nrow(ret)==nrow(y))  row.names(ret) = row.names(y)
-  
-  if (!is.null(keep.y))
-    ret = ret[ ,c(names(x),keep.y) ]
-  ret
-}
-
-util$flipleft <- function(x,named_vec, by) {
-  # kinda dangerous.  but so convenient
-  if (is.null(names(named_vec))) {
-    stopifnot(length(named_vec) == nlevels(x[,by]))
-    names(named_vec) = levels(x[,by])    
-  }
-  y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
-  x$ze_orig_order = 1:nrow(x)  
-  merged = merge(x,y, by.x=by, by.y=0, all.x=T, all.y=F)
-
-  merged$ze_y_value[order( merged$ze_orig_order )]
-}
-
-util$read.xmlss <- function(f) {
-  ## BAD BUG: the xml skips cells sometimes.  tricky to parse, argh.
-  # Mac Excel 2004 calls this "XML Spreadsheet".  It's nice because it's UTF-8.
-  #  [ mac .xls seems to be macroman, but xls2csv (perl converter) f's it up,.
-  #    and then iconv can't recover.  boo! ]
-  csv_pipe = pipe(paste('ruby <<EOF
-    require "rubygems"
-    require "hpricot"
-    require "fastercsv"
-    h = Hpricot(File.read("',f,'"))
-    mat = (h.at("worksheet")/"row").map{|row| (row/"cell").map{|data| data.inner_text}}
-    mat.each{|row| puts row.to_csv}
-', sep=''))
-  df = read.csv(csv_pipe)
-  # close(csv_pipe)
-  df
-}
 
 ########
 
@@ -490,7 +482,8 @@ util$excel <- function(d) {
   f = paste("/tmp/tmp.", round(runif(1)*100),".csv",  sep='')
   con = file(f, "w", encoding="MACROMAN")
   write.csv(d, con)
-  system(paste("open -a 'Microsoft Excel' ",f, sep=''))
+  # system(paste("open -a 'Microsoft Excel' ",f, sep=''))
+  system(paste("open -a '/Applications/Microsoft Office 2008/Microsoft Excel.app' ",f, sep=''))
   close(con)
 }
 
@@ -500,8 +493,8 @@ util$mate <- function(...) {
 
 util$ppy <- function(x, column.major=FALSE, ...) {
   # pretty-print as yaml.  intended for rows with big textual cells.
-  # a la mysql's \G operator a la http://rubyisawesome.com/2007/7/10/mysql-secrets-g-instead-of
-  # same usecase as ppy() in my http://dotfiles.org/~brendano/.irbrc
+  # a la mysql's \G operator
+  # same usecase as ppy() in dotfiles.org/~brendano/.irbrc
 
   library(yaml)
   cat(as.yaml(x, column.major=column.major), ...)
@@ -522,3 +515,50 @@ util$newwin <- function(x) {
 while("util" %in% search())
   detach("util")
 attach(util)
+
+##########
+
+
+
+
+
+
+##  deprecated  ##
+
+util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, ...) {
+  # Wrapper around merge().  turns out this is not needed because i didnt 
+  # read merge()'s manual page carefully enough: it has a facility for
+  # joining on rownames.  merge() is great.
+    
+  if (row.x)  x[,by] = row.names(x)
+  if (row.y)  y[,by] = row.names(y)
+
+  ret = merge(x,y,by=by, suffixes=c('','.y'), ...)
+  if (row.x && nrow(ret)==nrow(x))  row.names(ret) = row.names(x)
+  if (row.y && nrow(ret)==nrow(y))  row.names(ret) = row.names(y)
+  
+  if (!is.null(keep.y))
+    ret = ret[ ,c(names(x),keep.y) ]
+  ret
+}
+
+util$read.xmlss <- function(f) {
+  ## BAD BUG: the xml skips cells sometimes.  tricky to parse, argh.
+  # Mac Excel 2004 calls this "XML Spreadsheet".  It's nice because it's UTF-8.
+  #  [ mac .xls seems to be macroman, but xls2csv (perl converter) f's it up,.
+  #    and then iconv can't recover.  boo! ]
+  csv_pipe = pipe(paste('ruby <<EOF
+    require "rubygems"
+    require "hpricot"
+    require "fastercsv"
+    h = Hpricot(File.read("',f,'"))
+    mat = (h.at("worksheet")/"row").map{|row| (row/"cell").map{|data| data.inner_text}}
+    mat.each{|row| puts row.to_csv}
+', sep=''))
+  df = read.csv(csv_pipe)
+  # close(csv_pipe)
+  df
+}
+
+util$list2v <- function(x)  sapply(x, I)    # turns list's values into a vector.  index names are dropped.  pre-obsoleted by unlist() ?
+

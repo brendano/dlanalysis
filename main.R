@@ -41,10 +41,10 @@ dlanalysis$load_categ_anno <- function(filename, sep="\t", ...) {
   if ( ! setequal(levels(a$response), levels(a$gold)))
     stop("Uhoh, levels of response and gold are not the same.  need to hack up this code here")
   attr(a,'candidates') = levels(a$response)
-  attr(a,'target') = tail(a@candidates, 1)
+  attr(a,'target') = tail(attr(a,'candidates'), 1)
   class(a) = c('data.frame','anno')
-  msg("Candidates: ", a@candidates)
-  msg("Target: ", a@target)
+  msg("Candidates: ", attr(a,'candidates'))
+  msg("Target: ", attr(a,'target'))
   a$X.amt_annotation_ids = NULL
   a
 }
