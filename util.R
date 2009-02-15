@@ -59,18 +59,39 @@ util$list2df <- function(ls) {
   }
   cols = unique(cols)
 
-  ret = data.frame(row.names=names(b))
+  dynamic_returns = (
+    if (class(b[[1]]) == "data.frame") TRUE
+    else if (class(b[[1]]) == "list") FALSE
+    else FALSE
+    # else stop(paste("don't know how to aggregate returns of type",class(b[[1]])))
+  )
 
-  for (col in cols) {
-    ret[,col] = sapply(names(b), function(k) {
-      if (is.null(b[[k]]))  NA
-      else if (!is.null(names(b[[k]])))  b[[k]][[col]]
-      else if (length(b[[k]])==1 && is.na(b[[k]]))  NA
-      else stop("dont know what to do with value ",b[[k]])
-    })
-  }
-  if (length(cols) == 0) {
-    return(sapply(names(b), function(k) b[[k]]))
+  ret = NULL
+  if ( dynamic_returns ) {
+    ret = as.list(rep(0, length(cols)))
+    names(ret) = cols
+    ret = data.frame(ret)[0,]
+
+    for (i in 1:length(b)) {
+      ret = rbind(ret, b[[i]])
+    }
+  } else {
+    ret = data.frame(row.names=names(b))
+    for (col in cols) {
+      # print(col)
+      ret[,col] = sapply(names(b), function(k) {
+        if (is.null(b[[k]])) {
+          NA
+        } else if (!is.null(names(b[[k]]))) { 
+          b[[k]][[col]] 
+        } else if (length(b[[k]])==1 && is.na(b[[k]])) {
+          NA 
+        } else stop("dont know what to do with value ",b[[k]])
+      })
+    }
+    if (length(cols) == 0) {
+      return(sapply(names(b), function(k) b[[k]]))
+    }
   }
   ret
 }
@@ -233,6 +254,11 @@ util$shuffle.default <- function(x)  x[order(runif(length(x)))]
 
 util$shuffle.data.frame <- function(x)  x[order(runif(nrow(x))),]
 
+util$sample_df <- function(d, size=10, ...)  {
+  samp = sample(1:nrow(d), size=size, ...)
+  d[samp,]
+}
+
 util$present_levels <- function(x) intersect(levels(x), x)
 
 util$trim_levels <- function(...) UseMethod("trim_levels")
@@ -267,7 +293,7 @@ util$table.square <- function(x,y, ..., values=unique(c(as.c(x),as.c(y)))) {
 }
 
 util$table.cond <- function(...) {
-  # P(x|y...)
+  # for two args x,y: x on rows, y on cols, cells are P(y|x)
   t = table(...)
   for (x1 in 1:nrow(t))
     t[x1,] = t[x1,] / sum(t[x1,])
