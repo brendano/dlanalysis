@@ -33,6 +33,8 @@ util$dfagg <- function(d, byvals, fn, trim=TRUE) {
   #
   # If you have a multidimensional matrix (R calls "array"), apply() lets you 
   # select the margin for rollup in a similar way.
+  #
+  # ALTERNATIVE: ddply() from hadley wickham's plyr: http://had.co.nz/plyr/
 
   if (class(byvals) == 'function')
     byvals = byvals(d)
@@ -51,6 +53,8 @@ util$list2df <- function(ls) {
   # Outputs a dataframe where said indexes are the column names.
   # Is tolerant for slight inconsistencies of present indexes.
   # Transfers list index names to dataframe rownames.
+  #
+  # ALTERNATIVE: ldply() -- i think -- from http://had.co.nz/plyr/
   
   b=ls
   cols = NULL
@@ -116,6 +120,8 @@ util$matrix2df <- function(x) {
 util$dfapply <- function(collection, fn) {
   # like sapply/lapply except it expects fn() to yield lists.
   # each list gets coerced into a single row of a returned dataframe.
+  # ALTERNATIVE: adply() -- i think -- from http://had.co.nz/plyr/
+
   r = sapply(collection, fn)
   r = base::t(r)
   # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
@@ -153,6 +159,8 @@ util$df2matrix <- function(d, bycols, targetcol,
   # 0.5          668 668  NA  NA
   #
   # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
+  #
+  # ALTERNATIVE: daply() from hadley wickham's plyr: http://had.co.nz/plyr/
 
   for (j in 1:length(bycols))
     d[,bycols[j]] = factor(d[,bycols[j]])
