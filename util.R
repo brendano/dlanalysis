@@ -4,7 +4,7 @@
 
 
 options(showWarnCalls=T, showErrorCalls=T)
-# mac specific?
+# mac specific?  probably bad in the R GUI too.
 if (system("stty -a &>/dev/null") == 0)
   options(width= as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1])) - 1 )
 
@@ -214,6 +214,8 @@ util$flipleft <- function(x, named_vec, by) {
 
 #######
 
+util$read.tsv <- function(...)  read.delim(..., quote='')  # honest-to-goodness vanilla tsv with header
+
 util$msg <- function(...)  cat(..., "\n", file=stderr())
 
 util$strlen <- function(s)  length(strsplit(s,"")[[1]])
@@ -238,6 +240,8 @@ util$unwhich <- function(indices, len=length(indices)) {
 
 util$nna <- function(...) !is.na(...)   # i type this a lot, i think its worth 3 characters + shift key
 
+util$kna <- function(x) x[nna(x)]  # kill NA's (from vector)
+
 # hm: unitnorm and rescale are both subsumed in reshape:rescaler
 
 util$unitnorm <- function(x, na.rm=FALSE, ...)  (x - mean(x,na.rm=na.rm,...)) / sd(x,na.rm=na.rm)
@@ -247,6 +251,18 @@ util$renorm <- function(x, mean=0, sd=1, ...)  (unitnorm(x,...) * sd) + mean
 util$rescale <- function(x, bounds=range(x))  (x-bounds[1]) / (bounds[2]-bounds[1])
 
 util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
+
+# util$my_rmultinom <- function(n, w=c(1,1,8)) {
+#   # because rmultinom() doesn't make sense to me
+#   # w are per-class weights (unnorm probs)
+#   p = w / sum(w)
+#   cutoffs = cumsum(p)
+#   unif = runif(n)
+#   mat = sapply(unif, function(x) x < cutoffs)
+#   apply(mat, 2, function(x) min(which(x)) - 1)
+# }
+
+util$boot_binom <- function(n, p)   rbinom(1,n,p)/n
 
 util$shuffle <- function(...) UseMethod("shuffle")
 
@@ -475,6 +491,14 @@ util$multi_xprod <- function(args) {
   lapply(ret, function(x)  x[2:length(x)])
 }
 
+util$printf <- function(...) cat(sprintf(...))
+
+util$listprint <- function(x) {
+  s = paste(sapply(names(x), function(n)  sprintf("%s=%s", n,x[[n]])), collapse=' ')
+  printf("%s\n", s)
+}
+
+
 # routines to help manage longrunning jobs and optimize performance.
 # so much more potential here...
 
@@ -502,15 +526,57 @@ util$dotprogress <- function(callback, interval=10) {
 
 ########
 
+util$hintonplot <- function(mat, max_value=max(abs(mat)), mid_value=0, ...) {
+  # example for counts:
+  # > t=table(cyl=mtcars$cyl, mpg=cut(mtcars$mpg,3))
+  # > t
+  #    mpg
+  # cyl (10.4,18.2] (18.2,26.1] (26.1,33.9]
+  #   4           0           6           5
+  #   6           2           5           0
+  #   8          12           2           0
+  # > hintonplot(t)   # same thing but graphically
+
+  plot.new()
+  plot.window(xlim=c(0.5,ncol(mat)+0.5), ylim=c(0.5,nrow(mat)+0.5))
+
+  x_mid = 1:ncol(mat)
+  y_mid = 1:nrow(mat)
+
+  area = abs(mat) / max_value
+  side = sqrt(area)
+
+
+  for (x in 1:ncol(mat)) {
+    for (y in nrow(mat):1) {
+      # ym = (nrow(mat):1)[y]
+      ym = y
+      d = side[ym,x] / 2
+      rect(x-d, y-d, x+d, y+d, col=if (mat[ym,x]>0) 'darkblue' else 'darkred')
+    }
+  }
+
+  axis(1, 1:ncol(mat), labels=colnames(mat))
+  # axis(2, nrow(mat):1, labels=row.names(mat))
+  axis(2, 1:nrow(mat), labels=row.names(mat))
+  title(xlab=names(dimnames(mat))[2], ylab=names(dimnames(mat))[1], ...)
+}
+
+
+
+
+########
+
 # for interactivity...
 
 util$excel <- function(d) {
-  f = paste("/tmp/tmp.", round(runif(1)*100),".csv",  sep='')
-  con = file(f, "w", encoding="MACROMAN")
-  write.csv(d, con)
+  f = paste("/tmp/tmp.", round(runif(1)*1000),".csv",  sep='')
+  # con = file(f, "w", encoding="MACROMAN")
+  con = file(f, "w")
+  write.csv(d, con, row.names=FALSE)
+  close(con)
   # system(paste("open -a 'Microsoft Excel' ",f, sep=''))
   system(paste("open -a '/Applications/Microsoft Office 2008/Microsoft Excel.app' ",f, sep=''))
-  close(con)
 }
 
 util$mate <- function(...) {
@@ -569,10 +635,15 @@ util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, ...) {
 }
 
 util$read.xmlss <- function(f) {
+  # ALTERNATIVE: read.tsv(pipe("xlsx2tsv ..."))  with github.com/brendano/tsvutils
+  # xlsx is DIFFERENT from xmlss.  on mac, need excel 2008 to get it
+
   ## BAD BUG: the xml skips cells sometimes.  tricky to parse, argh.
   # Mac Excel 2004 calls this "XML Spreadsheet".  It's nice because it's UTF-8.
   #  [ mac .xls seems to be macroman, but xls2csv (perl converter) f's it up,.
   #    and then iconv can't recover.  boo! ]
+
+
   csv_pipe = pipe(paste('ruby <<EOF
     require "rubygems"
     require "hpricot"
