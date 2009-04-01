@@ -570,6 +570,68 @@ util$hintonplot <- function(mat, max_value=max(abs(mat)), mid_value=0, ...) {
   title(xlab=names(dimnames(mat))[2], ylab=names(dimnames(mat))[1], ...)
 }
 
+util$binary_eval <- function(pred,labels, cutoff='naive') {
+  library(ROCR)
+  # plot(performance(prediction(pred,y),'acc'))
+  rocr_pred = prediction(pred,labels)
+  acc = performance(rocr_pred,'acc')
+  f1 = performance(rocr_pred,'f')
+  auc = performance(rocr_pred,'auc')@y.values[[1]]
+  roc = performance(rocr_pred,'rec','spec')
+  # sensspec = performance(rocr_pred,'rec','spec')
+  pr_curve = performance(rocr_pred,'prec','rec')
+
+  printf("AUC = %.3f\n", auc)
+
+  if (cutoff=='naive') {
+    if (all(pred>=0) & all(pred<=1)) {
+      printf("Predictions seem to be probabilities, so ")
+      cutoff = 0.5
+    } else if (any(pred<0) & any(pred>0)) {
+      printf("Predictions seem to be real-valued scores, so ")
+      cutoff = 0
+    } else { 
+      warning("cant tell what naive cutoff should be")
+      cutoff = NULL
+    }
+    printf("using naive cutoff %s:\n", cutoff)
+  } else if (class(cutoff)=='character') {
+    printf("Using %s-best cutoff ", cutoff)
+    perf = performance(rocr_pred,cutoff)
+    cutoff_ind = which.max(perf@y.values[[1]])
+    cutoff = rocr_pred@cutoffs[[1]][cutoff_ind]
+    printf("%f:\n", cutoff)
+  } else {
+    printf("For cutoff %s:\n", cutoff)
+  }
+  cutoff_ind = last(which(rocr_pred@cutoffs[[1]] >= cutoff))
+
+
+  par(mfrow=c(2,2))
+  pp = function(perf)  if (is.finite(cutoff_ind)) points(perf@x.values[[1]][cutoff_ind], perf@y.values[[1]][cutoff_ind], col='blue')
+  plot(acc); pp(acc)
+  plot(f1); pp(f1)
+  plot(roc); pp(roc)
+  abline(a=1,b=-1,lty='dashed',col='gray')
+  legend('bottomleft',legend=sprintf("AUC = %.3f",auc))
+  plot(pr_curve); pp(pr_curve)
+  best_f1 = which.max(f1@y.values[[1]])
+  points(pr_curve@x.values[[1]][best_f1], pr_curve@y.values[[1]][best_f1], pch=2, col='green')
+
+  # printf("Acc = %.3f\n", mean((pred >= cutoff) == (labels > 0)))
+  printf("Acc = %.3f\n", acc@y.values[[1]][cutoff_ind])
+
+  printf("  F = %.3f\n", f1@y.values[[1]][cutoff_ind])
+  printf(" Prec = %.3f\n", pr_curve@y.values[[1]][cutoff_ind])
+  printf("  Rec = %.3f\n", pr_curve@x.values[[1]][cutoff_ind])
+  printf(" Spec = %.3f\n", roc@x.values[[1]][cutoff_ind])
+  if (rocr_pred@n.pos[[1]] != rocr_pred@n.neg[[1]])
+    printf("Balanced Acc = %.3f\n", mean(c(roc@x.values[[1]][cutoff_ind], roc@y.values[[1]][cutoff_ind])))
+
+
+  invisible(rocr_pred)
+}
+
 
 
 
@@ -589,6 +651,10 @@ util$excel <- function(d) {
 
 util$mate <- function(...) {
   system(paste("mate", ...))
+}
+
+util$vim <- function(...) {
+  system(paste("vim",...))
 }
 
 util$ppy <- function(x, column.major=FALSE, ...) {
