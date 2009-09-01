@@ -1,13 +1,15 @@
 # util.R:
-# Utilities to make R an even happier place
+# Utilities to make R a happier place
 # Brendan O'Connor, brenocon@gmail.com
 
 
 options(showWarnCalls=T, showErrorCalls=T)
 # mac specific?  probably bad in the R GUI too.
-if (system("stty -a &>/dev/null") == 0)
-  options(width= as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1])) - 1 )
-
+if (system("stty -a &>/dev/null") == 0) {
+  numcol = as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1]))
+  if (numcol > 0)
+    options(width=  numcol - 1 )
+}
 
 
 util = new.env()
@@ -18,6 +20,18 @@ util = new.env()
 #  dfagg, dfapply, df2matrix, matrix2df
 # i'm often confused whether proper R style should emphasize matrices or dataframes.
 # so these support for a dataframe-centric lifestyle.
+
+reframe <- function(.data, ...) {
+  print(.data)
+  print(list(...))
+  eval(substitute(data.frame(...)), .data, parent.frame())
+}
+
+# reframe = function(.data, ...) { 
+#   e = eval(substitute(list(...)), .data, parent.frame()) 
+#   data.frame(e) 
+# } 
+
 
 
 util$dfagg <- function(d, byvals, fn, trim=TRUE) {
@@ -570,7 +584,15 @@ util$hintonplot <- function(mat, max_value=max(abs(mat)), mid_value=0, ...) {
   title(xlab=names(dimnames(mat))[2], ylab=names(dimnames(mat))[1], ...)
 }
 
-util$binary_eval <- function(pred,labels, cutoff='naive') {
+util$linelight <- function(x,y, lty='dashed', col='lightgray', ...) {
+  # highlight a point with lines running to the axes.
+  left = par('usr')[1]
+  bot = par('usr')[3]
+  segments(left,y, x,y, lty=lty, col=col, ...)
+  segments(x,bot,  x,y, lty=lty, col=col, ...)
+}
+
+util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
   library(ROCR)
   # plot(performance(prediction(pred,y),'acc'))
   rocr_pred = prediction(pred,labels)
@@ -580,6 +602,7 @@ util$binary_eval <- function(pred,labels, cutoff='naive') {
   roc = performance(rocr_pred,'rec','spec')
   # sensspec = performance(rocr_pred,'rec','spec')
   pr_curve = performance(rocr_pred,'prec','rec')
+  rp_curve = performance(rocr_pred,'rec','prec')
 
   printf("AUC = %.3f\n", auc)
 
@@ -597,9 +620,9 @@ util$binary_eval <- function(pred,labels, cutoff='naive') {
     printf("using naive cutoff %s:\n", cutoff)
   } else if (class(cutoff)=='character') {
     printf("Using %s-best cutoff ", cutoff)
-    perf = performance(rocr_pred,cutoff)
+    perf = performance(rocr_pred, cutoff, ...)
     cutoff_ind = which.max(perf@y.values[[1]])
-    cutoff = rocr_pred@cutoffs[[1]][cutoff_ind]
+    cutoff = if (cutoff=='prbe') perf@x.values[[1]][1] else rocr_pred@cutoffs[[1]][cutoff_ind]
     printf("%f:\n", cutoff)
   } else {
     printf("For cutoff %s:\n", cutoff)
@@ -607,16 +630,34 @@ util$binary_eval <- function(pred,labels, cutoff='naive') {
   cutoff_ind = last(which(rocr_pred@cutoffs[[1]] >= cutoff))
 
 
-  par(mfrow=c(2,2))
-  pp = function(perf)  if (is.finite(cutoff_ind)) points(perf@x.values[[1]][cutoff_ind], perf@y.values[[1]][cutoff_ind], col='blue')
+  if (repar) par(mfrow=c(2,2))
+
+  pp = function(perf)  {
+    if (is.finite(cutoff_ind)) {
+      x=perf@x.values[[1]][cutoff_ind]
+      y=perf@y.values[[1]][cutoff_ind]
+      points(x,y, col='blue')
+      linelight(x,y, col='lightblue')
+    }
+  }
   plot(acc); pp(acc)
   plot(f1); pp(f1)
   plot(roc); pp(roc)
   abline(a=1,b=-1,lty='dashed',col='gray')
   legend('bottomleft',legend=sprintf("AUC = %.3f",auc))
-  plot(pr_curve); pp(pr_curve)
+  plot(rp_curve); pp(rp_curve)
+  pp = function(ind,...) points(rp_curve@x.values[[1]][ind], rp_curve@y.values[[1]][ind], ...)
   best_f1 = which.max(f1@y.values[[1]])
-  points(pr_curve@x.values[[1]][best_f1], pr_curve@y.values[[1]][best_f1], pch=2, col='green')
+  pp(best_f1, pch=2,col='green')
+  f05 = performance(rocr_pred,'f',beta=0.5)
+  best_f05 = which.max(f05@y.values[[1]])
+  pp(best_f05,pch=2,col='green')
+  f2 = performance(rocr_pred,'f',beta=2)
+  best_f2 = which.max(f2@y.values[[1]])
+  pp(best_f2,pch=2,col='green')
+
+  prbe = performance(rocr_pred,'prbe')@y.values[[1]]
+  linelight(prbe,prbe,col='lightgray')
 
   # printf("Acc = %.3f\n", mean((pred >= cutoff) == (labels > 0)))
   printf("Acc = %.3f\n", acc@y.values[[1]][cutoff_ind])
