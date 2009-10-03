@@ -4,8 +4,12 @@
 
 
 options(showWarnCalls=T, showErrorCalls=T)
-# mac specific?  probably bad in the R GUI too.
-if (system("stty -a &>/dev/null") == 0) {
+
+if ( (numcol <-Sys.getenv("COLUMNS")) != "") {
+  numcol = as.integer(numcol)
+  options(width= numcol - 1)
+} else if (system("stty -a &>/dev/null") == 0) {
+  # mac specific?  probably bad in the R GUI too.
   numcol = as.integer(sub(".* ([0-9]+) column.*", "\\1", system("stty -a", intern=T)[1]))
   if (numcol > 0)
     options(width=  numcol - 1 )
