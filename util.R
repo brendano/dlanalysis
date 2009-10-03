@@ -26,8 +26,6 @@ util = new.env()
 # so these support for a dataframe-centric lifestyle.
 
 reframe <- function(.data, ...) {
-  print(.data)
-  print(list(...))
   eval(substitute(data.frame(...)), .data, parent.frame())
 }
 
@@ -427,10 +425,13 @@ util$lax_rbind <- function(...) {
   inputs = list(...)
   each_names = sapply(inputs, names)
   all_names = unique(c(each_names, recursive=TRUE))
+  if (is.data.frame(inputs[[1]]) && all(dim(inputs[[1]])==c(0,0)))
+    inputs[[1]] = NULL
   for (k in 1:length(inputs)) {
     if (is.null(inputs[[k]])) next
     more = setdiff(all_names, names(inputs[[k]]))
-    inputs[[k]][,more] = NA
+    names(inputs[[k]]) = c(names(inputs[[k]]), more)
+    # inputs[[k]][,more] = NA
   }
   do.call(rbind, inputs)
 }
@@ -535,7 +536,7 @@ util$timeit <- function(expr, name=NULL) {
   ret = eval(expr)
   finish = Sys.time()
   if (!is.null(name)) cat(name,": ")
-  cat(sprintf("%.3f seconds\n", finish-start))
+  print(finish-start)
   invisible(ret)
 }
 
