@@ -1,6 +1,0 @@
-#!/usr/bin/env ruby
-
-require 'rubygems'
-ENV['XMAS_ENV'] = "production"
-require 'xmas'
-

@@ -24,15 +24,9 @@ util = new.env()
 #  dfagg, dfapply, df2matrix, matrix2df
 # i'm often confused whether proper R style should emphasize matrices or dataframes.
 # so these support for a dataframe-centric lifestyle.
+#
+# Many of these are subsumed by the plyr library.
 
-reframe <- function(.data, ...) {
-  eval(substitute(data.frame(...)), .data, parent.frame())
-}
-
-# reframe = function(.data, ...) { 
-#   e = eval(substitute(list(...)), .data, parent.frame()) 
-#   data.frame(e) 
-# } 
 
 
 
@@ -236,9 +230,15 @@ util$flipleft <- function(x, named_vec, by) {
   merged$ze_y_value[order( merged$ze_orig_order )]
 }
 
+## now in plyr 0.19 as summiarise() http://github.com/hadley/plyr/blob/master/NEWS
+# util$reframe = function(.data, ...) { 
+#   e = eval(substitute(list(...)), .data, parent.frame()) 
+#   data.frame(e) 
+# } 
+
 #######
 
-util$read.tsv <- function(...)  read.delim(..., quote='')  # honest-to-goodness vanilla tsv with header
+util$read.tsv <- function(...)  read.delim(..., quote='', comment='', stringsAsFactors=FALSE)  # honest-to-goodness vanilla tsv with header
 
 util$msg <- function(...)  cat(..., "\n", file=stderr())
 
@@ -523,6 +523,34 @@ util$printf <- function(...) cat(sprintf(...))
 util$listprint <- function(x) {
   s = paste(sapply(names(x), function(n)  sprintf("%s=%s", n,x[[n]])), collapse=' ')
   printf("%s\n", s)
+}
+
+# improved list of objects
+# http://stackoverflow.com/questions/1358003/tricks-to-manage-the-available-memory-in-an-r-session
+util$.ls.objects <- function (pos = 1, pattern, order.by,
+                        decreasing=FALSE, head=FALSE, n=5) {
+    napply <- function(names, fn) sapply(names, function(x)
+                                         fn(get(x, pos = pos)))
+    names <- ls(pos = pos, pattern = pattern)
+    obj.class <- napply(names, function(x) as.character(class(x))[1])
+    obj.mode <- napply(names, mode)
+    obj.type <- ifelse(is.na(obj.class), obj.mode, obj.class)
+    obj.size <- napply(names, object.size)
+    obj.dim <- t(napply(names, function(x)
+                        as.numeric(dim(x))[1:2]))
+    vec <- is.na(obj.dim)[, 1] & (obj.type != "function")
+    obj.dim[vec, 1] <- napply(names, length)[vec]
+    out <- data.frame(obj.type, obj.size, obj.dim)
+    names(out) <- c("Type", "Size", "Rows", "Columns")
+    if (!missing(order.by))
+        out <- out[order(out[[order.by]], decreasing=decreasing), ]
+    if (head)
+        out <- head(out, n)
+    out
+}
+# shorthand
+util$lsos <- function(..., n=10) {
+    .ls.objects(..., order.by="Size", decreasing=TRUE, head=TRUE, n=n)
 }
 
 
