@@ -140,7 +140,7 @@ util$dfapply <- function(collection, fn) {
     dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
   }
   r = matrix2df(r)
-  row.names(r) = collection
+  # row.names(r) = collection
   r
 }
 
@@ -240,6 +240,9 @@ util$flipleft <- function(x, named_vec, by) {
 
 util$read.tsv <- function(...)  read.delim(..., quote='', comment='', stringsAsFactors=FALSE)  # honest-to-goodness vanilla tsv with header
 
+util$write.tsv <- function(...,col.names=T,row.names=F,sep='\t',quote=F)
+  write.table(...,col.names=col.names,row.names=row.names,sep=sep,quote=quote)
+
 util$msg <- function(...)  cat(..., "\n", file=stderr())
 
 util$strlen <- function(s)  length(strsplit(s,"")[[1]])
@@ -272,7 +275,7 @@ util$unitnorm <- function(x, na.rm=FALSE, ...)  (x - mean(x,na.rm=na.rm,...)) / 
 
 util$renorm <- function(x, mean=0, sd=1, ...)  (unitnorm(x,...) * sd) + mean
 
-util$rescale <- function(x, bounds=range(x))  (x-bounds[1]) / (bounds[2]-bounds[1])
+util$rescale <- function(x, bounds=range(x))  (x-bounds[1]) / (bounds[2]-bounds[1]) #has bug
 
 util$rbern <- function(n, p=0.5)  rbinom(n, size=1, prob=p)
 
@@ -422,6 +425,7 @@ util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
 }
 
 util$lax_rbind <- function(...) {
+  # DEPRECATED: use plyr::rbind.fill() instead
   inputs = list(...)
   each_names = sapply(inputs, names)
   all_names = unique(c(each_names, recursive=TRUE))
@@ -625,6 +629,16 @@ util$linelight <- function(x,y, lty='dashed', col='lightgray', ...) {
   segments(x,bot,  x,y, lty=lty, col=col, ...)
 }
 
+grid_points <- function(min,max) {
+  x = min
+  ret = NULL
+  while(x <= max) {
+    ret = c(ret, x, x*2, x*5)
+    x = x * 10
+  }
+  ret[ret <= max]
+}
+
 util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
   library(ROCR)
   # plot(performance(prediction(pred,y),'acc'))
@@ -632,7 +646,7 @@ util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
   acc = performance(rocr_pred,'acc')
   f1 = performance(rocr_pred,'f')
   auc = performance(rocr_pred,'auc')@y.values[[1]]
-  roc = performance(rocr_pred,'rec','spec')
+  roc = function() performance(rocr_pred,'rec','spec')
   # sensspec = performance(rocr_pred,'rec','spec')
   pr_curve = performance(rocr_pred,'prec','rec')
   rp_curve = performance(rocr_pred,'rec','prec')
@@ -655,6 +669,7 @@ util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
     printf("Using %s-best cutoff ", cutoff)
     perf = performance(rocr_pred, cutoff, ...)
     cutoff_ind = which.max(perf@y.values[[1]])
+    print(cutoff_ind)
     cutoff = if (cutoff=='prbe') perf@x.values[[1]][1] else rocr_pred@cutoffs[[1]][cutoff_ind]
     printf("%f:\n", cutoff)
   } else {
@@ -666,7 +681,7 @@ util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
   if (repar) par(mfrow=c(2,2))
 
   pp = function(perf)  {
-    if (is.finite(cutoff_ind)) {
+    if (length(cutoff_ind)>0 && is.finite(cutoff_ind)) {
       x=perf@x.values[[1]][cutoff_ind]
       y=perf@y.values[[1]][cutoff_ind]
       points(x,y, col='blue')
@@ -749,6 +764,12 @@ util$newwin <- function(x) {
   system(paste("mate ",f," &", sep=''))
 }
 
+util$dopdf <- function(..., cmd) {
+  pdf(...)
+  eval(cmd)
+  dev.off()
+}
+
 
 ##########
 
@@ -757,53 +778,3 @@ while("util" %in% search())
 attach(util)
 
 ##########
-
-
-
-
-
-
-##  deprecated  ##
-
-util$mymerge <- function(x,y, row.x=F,row.y=F, keep.y=NULL, by=NULL, ...) {
-  # Wrapper around merge().  turns out this is not needed because i didnt 
-  # read merge()'s manual page carefully enough: it has a facility for
-  # joining on rownames.  merge() is great.
-    
-  if (row.x)  x[,by] = row.names(x)
-  if (row.y)  y[,by] = row.names(y)
-
-  ret = merge(x,y,by=by, suffixes=c('','.y'), ...)
-  if (row.x && nrow(ret)==nrow(x))  row.names(ret) = row.names(x)
-  if (row.y && nrow(ret)==nrow(y))  row.names(ret) = row.names(y)
-  
-  if (!is.null(keep.y))
-    ret = ret[ ,c(names(x),keep.y) ]
-  ret
-}
-
-util$read.xmlss <- function(f) {
-  # ALTERNATIVE: read.tsv(pipe("xlsx2tsv ..."))  with github.com/brendano/tsvutils
-  # xlsx is DIFFERENT from xmlss.  on mac, need excel 2008 to get it
-
-  ## BAD BUG: the xml skips cells sometimes.  tricky to parse, argh.
-  # Mac Excel 2004 calls this "XML Spreadsheet".  It's nice because it's UTF-8.
-  #  [ mac .xls seems to be macroman, but xls2csv (perl converter) f's it up,.
-  #    and then iconv can't recover.  boo! ]
-
-
-  csv_pipe = pipe(paste('ruby <<EOF
-    require "rubygems"
-    require "hpricot"
-    require "fastercsv"
-    h = Hpricot(File.read("',f,'"))
-    mat = (h.at("worksheet")/"row").map{|row| (row/"cell").map{|data| data.inner_text}}
-    mat.each{|row| puts row.to_csv}
-', sep=''))
-  df = read.csv(csv_pipe)
-  # close(csv_pipe)
-  df
-}
-
-util$list2v <- function(x)  sapply(x, I)    # turns list's values into a vector.  index names are dropped.  pre-obsoleted by unlist() ?
-
