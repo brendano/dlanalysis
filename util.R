@@ -14,231 +14,24 @@ if ( (numcol <-Sys.getenv("COLUMNS")) != "") {
   if (numcol > 0)
     options(width=  numcol - 1 )
 }
-
+rm(numcol)
 
 util = new.env()
 
-######
-#
-# dataframe-outputting apply and aggregation functions.
-#  dfagg, dfapply, df2matrix, matrix2df
-# i'm often confused whether proper R style should emphasize matrices or dataframes.
-# so these support for a dataframe-centric lifestyle.
-#
-# Many of these are subsumed by the plyr library.
-
-
-
-
-util$dfagg <- function(d, byvals, fn, trim=TRUE) {
-  # like by() but usually returns dataframes:
-  #    if fn() returns a list, a data frame is returned.
-  #      -> byvals are the row names.
-  #      -> each list is coerced into a row.
-  #    if fn() returns a nonlist, a vector is returned.
-  #      -> byvals are the names.
-  # We attempt to be tolerant for slight inconsistencies in fn()'s return values.
-  #
-  # Goal is to be like SQL GROUP BY: dataframes in, aggregated dataframes out.
-  #
-  # If you have a multidimensional matrix (R calls "array"), apply() lets you 
-  # select the margin for rollup in a similar way.
-  #
-  # ALTERNATIVE: ddply() from hadley wickham's plyr: http://had.co.nz/plyr/
-
-  if (class(byvals) == 'function')
-    byvals = byvals(d)
-  if (trim && is.factor(byvals) && !setequal( present_levels(byvals), levels(byvals)) ) {
-    # change to "stop" to find if necessary
-    warning("Uhoh, byvals is a factor but only using only a subset of its levels.  Trimming them.  Hopefully this is what you want.")
-    byvals = trim_levels(byvals)
-  }
-
-  b = by(d, byvals, fn)
-  list2df(b)
-}
-
-util$list2df <- function(ls) {
-  # Wants a list of lists, each of which has the same set named indexes.
-  # Outputs a dataframe where said indexes are the column names.
-  # Is tolerant for slight inconsistencies of present indexes.
-  # Transfers list index names to dataframe rownames.
-  #
-  # ALTERNATIVE: ldply() -- i think -- from http://had.co.nz/plyr/
-  
-  b=ls
-  cols = NULL
-  for (i in 1:min(100,length(b))) {
-    cols = c(cols, try(names(b[[i]])))
-  }
-  cols = unique(cols)
-
-  dynamic_returns = (
-    if (class(b[[1]]) == "data.frame") TRUE
-    else if (class(b[[1]]) == "list") FALSE
-    else FALSE
-    # else stop(paste("don't know how to aggregate returns of type",class(b[[1]])))
-  )
-
-  ret = NULL
-  if ( dynamic_returns ) {
-    ret = as.list(rep(0, length(cols)))
-    names(ret) = cols
-    ret = data.frame(ret)[0,]
-
-    for (i in 1:length(b)) {
-      ret = rbind(ret, b[[i]])
-    }
-  } else {
-    ret = data.frame(row.names=names(b))
-    for (col in cols) {
-      # print(col)
-      ret[,col] = sapply(names(b), function(k) {
-        if (is.null(b[[k]])) {
-          NA
-        } else if (!is.null(names(b[[k]]))) { 
-          b[[k]][[col]] 
-        } else if (length(b[[k]])==1 && is.na(b[[k]])) {
-          NA 
-        } else stop("dont know what to do with value ",b[[k]])
-      })
-    }
-    if (length(cols) == 0) {
-      return(sapply(names(b), function(k) b[[k]]))
-    }
-  }
-  ret
-}
-
-util$matrix2df <- function(x) {
-  # sapply() with fn() yielding lists returns a matrix with named rows/cols ... 
-  # and whenever you name-index into this thing it return a list ... yuck
-  # make that shit more normal.
-  if (class(x) != 'matrix') stop("why is class ",class(x))
-  colnames = dimnames(x)[[2]]
-  if (nrow(x) > 1)
-    data.frame(
-      sapply(colnames, function(n) unlist(x[,n])),
-      row.names=row.names(x))
-  else
-    # because sapply returns a named vector in this case...
-    data.frame(
-      t(sapply(colnames, function(n) unlist(x[,n]))),
-      row.names=row.names(x))
-}
-
-util$dfapply <- function(collection, fn) {
-  # like sapply/lapply except it expects fn() to yield lists.
-  # each list gets coerced into a single row of a returned dataframe.
-  # ALTERNATIVE: adply() -- i think -- from http://had.co.nz/plyr/
-
-  r = sapply(collection, fn)
-  r = base::t(r)
-  # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
-  if (length(unique(dimnames(r)[[2]])) == 1) {
-    r = base::t(r)
-    dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
-  }
-  r = matrix2df(r)
-  # row.names(r) = collection
-  r
-}
-
-
-util$df2matrix <- function(d, bycols, targetcol, 
-      targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
-{
-  # for df's that essentially store sparse matrices.  make a real matrix via 
-  # by()-like conditioning on multiple columns ... a contingency table.
-  # Design goal: inspired by table(), which does the same thing, except cells are always counts.
-  #
-  # This is *NOT* the inverse of matrix2df !  would be good to change naming.
-  #
-  # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size": 
-  # > head(d)
-  #   size           ps  t acc
-  # 1    2 0.0009765625 -1 668
-  # 2    2 0.0009765625  0 668
-  # 3    2 0.0009765625 20 670
-  # 4    2 0.0009765625 50 664
-  # 
-  # you do:
-  # > df2matrix(head(d), c('ps','t'), 'acc', mean)
-  #               -1   0  20  50
-  # 0.0009765625 668 668 670 664
-  # 0.5          668 668  NA  NA
-  #
-  # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
-  #
-  # ALTERNATIVE: daply() from hadley wickham's plyr: http://had.co.nz/plyr/
-
-  for (j in 1:length(bycols))
-    d[,bycols[j]] = factor(d[,bycols[j]])
-
-  the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
-
-  # the by() cascade:
-  # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
-  #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
-  # so recursively build that linked list of closures, from right to left.
-  by_cascade = list()
-  by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
-  
-  for (j in length(bycols):1) {
-    by_cascade[[j]] = with(list(j=j),
-      function(x) {
-        by(x, x[,bycols[j]], by_cascade[[j+1]])
-      }
-    )
-  }
-
-  b = by_cascade[[1]](d)
-  m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
-
-  # simplest and slowest: dont use any margins for assignments.
-  # yes, this would be extremely speedy in c++
-  all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
-  for (i in 1:length(all_spots)) {
-    inds = all_spots[[i]]
-    m[t(inds)] = b[[inds]]
-  }
-  m
-}
-
-util$kill_df_lists <- function(d) {
-  # if you have internal lists inside your dataframe.  if you always use
-  # matrix2df this should never happen.  but sometimes it does.  yikes!  
-  for(n in names(d))
-    if (is.list(d[,n]))
-      d[,n] = list2v(d[,n])
-  d
-}
-
-util$flipleft <- function(x, named_vec, by) {
-  # Kinda dangerous but sometimes convenient: 
-  # Left join data frame `x` against named_vec, matching named_vec's names
-  # against a column in x.
-  # Returns the new column as a bare vector, same height as x.
-  if (is.null(names(named_vec))) {
-    stopifnot(length(named_vec) == nlevels(x[,by]))
-    names(named_vec) = levels(x[,by])    
-  }
-  y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
-  x$ze_orig_order = 1:nrow(x)  
-  merged = merge(x,y, by.x=by, by.y=0, all.x=T, all.y=F)
-
-  merged$ze_y_value[order( merged$ze_orig_order )]
-}
-
-## now in plyr 0.19 as summiarise() http://github.com/hadley/plyr/blob/master/NEWS
-# util$reframe = function(.data, ...) { 
-#   e = eval(substitute(list(...)), .data, parent.frame()) 
-#   data.frame(e) 
-# } 
-
 #######
 
-util$read.tsv <- function(...)  read.delim(..., quote='', comment='', stringsAsFactors=FALSE)  # honest-to-goodness vanilla tsv with header
+util$read.tsv <- function(..., quote='', comment='', stringsAsFactors=FALSE) {
+  # I hate stringsAsFactors so much....
+  args = list(...)
+  if (!is.null(args$col.names)) {
+    # read.delim() is not smart about this.  Yikes.
+    args$header = FALSE
+  }
+  args$quote=quote
+  args$comment=comment
+  args$stringsAsFactors=stringsAsFactors
+  do.call(read.delim, args)
+}
 
 util$write.tsv <- function(...,col.names=T,row.names=F,sep='\t',quote=F)
   write.table(...,col.names=col.names,row.names=row.names,sep=sep,quote=quote)
@@ -413,7 +206,7 @@ util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
   xstructure = sapply(xstructure,FUN=function(element)   strsplit(element,"\\."))
   yunique = sapply(yunique,FUN=function(element) strsplit(element,"\\."))
 
-   if (only.new.y) 
+   if (only.new.y)
     lapply(yunique, FUN=function(index) out[[index]]<<-y[[index]])
    else {
      if (!append) {
@@ -484,15 +277,15 @@ util$inject <- function(collection, start, fn) {
   acc
 }
 
-util$select <- function(collection, fn) {
-  # like lisp filter.  (named after ruby)
-  # nice for lists.  not useful for vectors, use boolean vector indexing instead.
-  r = c()
-  for (x in collection)
-    if (fn(x))
-      r = c(r, x)
-  r
-}
+# util$select <- function(collection, fn) {
+#   # like lisp filter.  (named after ruby)
+#   # nice for lists.  not useful for vectors, use boolean vector indexing instead.
+#   r = c()
+#   for (x in collection)
+#     if (fn(x))
+#       r = c(r, x)
+#   r
+# }
 
 util$xprod <- function(xs,ys) {
   ret = list()
@@ -562,7 +355,7 @@ util$lsos <- function(..., n=10) {
 # so much more potential here...
 
 util$timeit <- function(expr, name=NULL) {
-  # print how long the expression takes, and return its value too.  
+  # print how long the expression takes, and return its value too.
   # So you can interpose   timeit({ blabla })   around any chunk of code "blabla".
   start = Sys.time()
   ret = eval(expr)
@@ -629,7 +422,7 @@ util$linelight <- function(x,y, lty='dashed', col='lightgray', ...) {
   segments(x,bot,  x,y, lty=lty, col=col, ...)
 }
 
-grid_points <- function(min,max) {
+util$grid_points <- function(min,max) {
   x = min
   ret = NULL
   while(x <= max) {
@@ -646,7 +439,12 @@ util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
   acc = performance(rocr_pred,'acc')
   f1 = performance(rocr_pred,'f')
   auc = performance(rocr_pred,'auc')@y.values[[1]]
-  roc = function() performance(rocr_pred,'rec','spec')
+  roc = performance(rocr_pred,'rec','spec')
+  bac = if (rocr_pred@n.pos[[1]] != rocr_pred@n.neg[[1]])
+      sapply(1:length(roc@x.values[[1]]), function(i)
+        mean(c(roc@x.values[[1]][i], roc@y.values[[1]][i])))
+    else
+      rep(-1,length(pred))
   # sensspec = performance(rocr_pred,'rec','spec')
   pr_curve = performance(rocr_pred,'prec','rec')
   rp_curve = performance(rocr_pred,'rec','prec')
@@ -660,18 +458,23 @@ util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
     } else if (any(pred<0) & any(pred>0)) {
       printf("Predictions seem to be real-valued scores, so ")
       cutoff = 0
-    } else { 
+    } else {
       warning("cant tell what naive cutoff should be")
       cutoff = NULL
     }
     printf("using naive cutoff %s:\n", cutoff)
   } else if (class(cutoff)=='character') {
     printf("Using %s-best cutoff ", cutoff)
-    perf = performance(rocr_pred, cutoff, ...)
-    cutoff_ind = which.max(perf@y.values[[1]])
-    print(cutoff_ind)
+    if (cutoff=='bac') {
+      perf = NULL
+      perf_y = bac
+    } else {
+      perf = performance(rocr_pred, cutoff, ...)
+      perf_y = perf@y.values[[1]]
+    }
+    cutoff_ind = which.max(perf_y)
     cutoff = if (cutoff=='prbe') perf@x.values[[1]][1] else rocr_pred@cutoffs[[1]][cutoff_ind]
-    printf("%f:\n", cutoff)
+    printf("%f\n", cutoff)
   } else {
     printf("For cutoff %s:\n", cutoff)
   }
@@ -708,14 +511,20 @@ util$binary_eval <- function(pred,labels, cutoff='naive', repar=TRUE, ...) {
   linelight(prbe,prbe,col='lightgray')
 
   # printf("Acc = %.3f\n", mean((pred >= cutoff) == (labels > 0)))
-  printf("Acc = %.3f\n", acc@y.values[[1]][cutoff_ind])
+  printf("Acc %.3f, ", acc@y.values[[1]][cutoff_ind])
 
-  printf("  F = %.3f\n", f1@y.values[[1]][cutoff_ind])
-  printf(" Prec = %.3f\n", pr_curve@y.values[[1]][cutoff_ind])
-  printf("  Rec = %.3f\n", pr_curve@x.values[[1]][cutoff_ind])
-  printf(" Spec = %.3f\n", roc@x.values[[1]][cutoff_ind])
-  if (rocr_pred@n.pos[[1]] != rocr_pred@n.neg[[1]])
-    printf("Balanced Acc = %.3f\n", mean(c(roc@x.values[[1]][cutoff_ind], roc@y.values[[1]][cutoff_ind])))
+  printf("  F %.3f, Prec %.3f, Rec %.3f, Spec %.3f",
+    f1@y.values[[1]][cutoff_ind],
+    pr_curve@y.values[[1]][cutoff_ind],
+    pr_curve@x.values[[1]][cutoff_ind],
+    roc@x.values[[1]][cutoff_ind])
+  # printf(" Prec = %.3f\n", pr_curve@y.values[[1]][cutoff_ind])
+  # printf("  Rec = %.3f\n", pr_curve@x.values[[1]][cutoff_ind])
+  # printf(" Spec = %.3f\n", roc@x.values[[1]][cutoff_ind])
+
+  if (bac[1] != -1)
+    printf(", BalAcc %.3f", mean(bac))
+  printf("\n")
 
 
   invisible(rocr_pred)
@@ -764,11 +573,238 @@ util$newwin <- function(x) {
   system(paste("mate ",f," &", sep=''))
 }
 
-util$dopdf <- function(..., cmd) {
-  pdf(...)
+util$dopdf <- function(filename,..., cmd) {
+  pdf(filename, ...)
   eval(cmd)
   dev.off()
+  if (exists('OPEN') && OPEN)  system(sprintf("open %s", filename))
 }
+
+util$dopng <- function(filename,..., cmd) {
+  png(filename, ...)
+  eval(cmd)
+  dev.off()
+  if (exists('OPEN') && OPEN)  system(sprintf("open %s", filename))
+}
+
+##########
+
+#
+# dataframe-outputting apply and aggregation functions.
+#  dfagg, dfapply, df2matrix, matrix2df
+# i'm often confused whether proper R style should emphasize matrices or dataframes.
+# so these support for a dataframe-centric lifestyle.
+#
+# Many of these are subsumed by the plyr library.
+
+
+
+
+util$dfagg <- function(d, byvals, fn, trim=TRUE) {
+  # like by() but usually returns dataframes:
+  #    if fn() returns a list, a data frame is returned.
+  #      -> byvals are the row names.
+  #      -> each list is coerced into a row.
+  #    if fn() returns a nonlist, a vector is returned.
+  #      -> byvals are the names.
+  # We attempt to be tolerant for slight inconsistencies in fn()'s return values.
+  #
+  # Goal is to be like SQL GROUP BY: dataframes in, aggregated dataframes out.
+  #
+  # If you have a multidimensional matrix (R calls "array"), apply() lets you
+  # select the margin for rollup in a similar way.
+  #
+  # ALTERNATIVE: ddply() from hadley wickham's plyr: http://had.co.nz/plyr/
+
+  if (class(byvals) == 'function')
+    byvals = byvals(d)
+  if (trim && is.factor(byvals) && !setequal( present_levels(byvals), levels(byvals)) ) {
+    # change to "stop" to find if necessary
+    warning("Uhoh, byvals is a factor but only using only a subset of its levels.  Trimming them.  Hopefully this is what you want.")
+    byvals = trim_levels(byvals)
+  }
+
+  b = by(d, byvals, fn)
+  list2df(b)
+}
+
+util$list2df <- function(ls) {
+  # Wants a list of lists, each of which has the same set named indexes.
+  # Outputs a dataframe where said indexes are the column names.
+  # Is tolerant for slight inconsistencies of present indexes.
+  # Transfers list index names to dataframe rownames.
+  #
+  # ALTERNATIVE: ldply() -- i think -- from http://had.co.nz/plyr/
+
+  b=ls
+  cols = NULL
+  for (i in 1:min(100,length(b))) {
+    cols = c(cols, try(names(b[[i]])))
+  }
+  cols = unique(cols)
+
+  dynamic_returns = (
+    if (class(b[[1]]) == "data.frame") TRUE
+    else if (class(b[[1]]) == "list") FALSE
+    else FALSE
+    # else stop(paste("don't know how to aggregate returns of type",class(b[[1]])))
+  )
+
+  ret = NULL
+  if ( dynamic_returns ) {
+    ret = as.list(rep(0, length(cols)))
+    names(ret) = cols
+    ret = data.frame(ret)[0,]
+
+    for (i in 1:length(b)) {
+      ret = rbind(ret, b[[i]])
+    }
+  } else {
+    ret = data.frame(row.names=names(b))
+    for (col in cols) {
+      # print(col)
+      ret[,col] = sapply(names(b), function(k) {
+        if (is.null(b[[k]])) {
+          NA
+        } else if (!is.null(names(b[[k]]))) {
+          b[[k]][[col]]
+        } else if (length(b[[k]])==1 && is.na(b[[k]])) {
+          NA
+        } else stop("dont know what to do with value ",b[[k]])
+      })
+    }
+    if (length(cols) == 0) {
+      return(sapply(names(b), function(k) b[[k]]))
+    }
+  }
+  ret
+}
+
+util$matrix2df <- function(x) {
+  # sapply() with fn() yielding lists returns a matrix with named rows/cols ...
+  # and whenever you name-index into this thing it return a list ... yuck
+  # make that shit more normal.
+  if (class(x) != 'matrix') stop("why is class ",class(x))
+  colnames = dimnames(x)[[2]]
+  if (nrow(x) > 1)
+    data.frame(
+      sapply(colnames, function(n) unlist(x[,n])),
+      row.names=row.names(x))
+  else
+    # because sapply returns a named vector in this case...
+    data.frame(
+      t(sapply(colnames, function(n) unlist(x[,n]))),
+      row.names=row.names(x))
+}
+
+util$dfapply <- function(collection, fn) {
+  # like sapply/lapply except it expects fn() to yield lists.
+  # each list gets coerced into a single row of a returned dataframe.
+  # ALTERNATIVE: adply() -- i think -- from http://had.co.nz/plyr/
+
+  r = sapply(collection, fn)
+  r = base::t(r)
+  # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
+  if (length(unique(dimnames(r)[[2]])) == 1) {
+    r = base::t(r)
+    dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
+  }
+  r = matrix2df(r)
+  # row.names(r) = collection
+  r
+}
+
+
+util$df2matrix <- function(d, bycols, targetcol,
+      targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
+{
+  # for df's that essentially store sparse matrices.  make a real matrix via
+  # by()-like conditioning on multiple columns ... a contingency table.
+  # Design goal: inspired by table(), which does the same thing, except cells are always counts.
+  #
+  # This is *NOT* the inverse of matrix2df !  would be good to change naming.
+  #
+  # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size":
+  # > head(d)
+  #   size           ps  t acc
+  # 1    2 0.0009765625 -1 668
+  # 2    2 0.0009765625  0 668
+  # 3    2 0.0009765625 20 670
+  # 4    2 0.0009765625 50 664
+  #
+  # you do:
+  # > df2matrix(head(d), c('ps','t'), 'acc', mean)
+  #               -1   0  20  50
+  # 0.0009765625 668 668 670 664
+  # 0.5          668 668  NA  NA
+  #
+  # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
+  #
+  # ALTERNATIVE: daply() from hadley wickham's plyr: http://had.co.nz/plyr/
+
+  for (j in 1:length(bycols))
+    d[,bycols[j]] = factor(d[,bycols[j]])
+
+  the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
+
+  # the by() cascade:
+  # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
+  #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
+  # so recursively build that linked list of closures, from right to left.
+  by_cascade = list()
+  by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
+
+  for (j in length(bycols):1) {
+    by_cascade[[j]] = with(list(j=j),
+      function(x) {
+        by(x, x[,bycols[j]], by_cascade[[j+1]])
+      }
+    )
+  }
+
+  b = by_cascade[[1]](d)
+  m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
+
+  # simplest and slowest: dont use any margins for assignments.
+  # yes, this would be extremely speedy in c++
+  all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
+  for (i in 1:length(all_spots)) {
+    inds = all_spots[[i]]
+    m[t(inds)] = b[[inds]]
+  }
+  m
+}
+
+util$kill_df_lists <- function(d) {
+  # if you have internal lists inside your dataframe.  if you always use
+  # matrix2df this should never happen.  but sometimes it does.  yikes!
+  for(n in names(d))
+    if (is.list(d[,n]))
+      d[,n] = list2v(d[,n])
+  d
+}
+
+util$flipleft <- function(x, named_vec, by) {
+  # Kinda dangerous but sometimes convenient:
+  # Left join data frame `x` against named_vec, matching named_vec's names
+  # against a column in x.
+  # Returns the new column as a bare vector, same height as x.
+  if (is.null(names(named_vec))) {
+    stopifnot(length(named_vec) == nlevels(x[,by]))
+    names(named_vec) = levels(x[,by])
+  }
+  y = data.frame(row.names=names(named_vec), ze_y_value=named_vec)
+  x$ze_orig_order = 1:nrow(x)
+  merged = merge(x,y, by.x=by, by.y=0, all.x=T, all.y=F)
+
+  merged$ze_y_value[order( merged$ze_orig_order )]
+}
+
+## now in plyr 0.19 as summiarise() http://github.com/hadley/plyr/blob/master/NEWS
+# util$reframe = function(.data, ...) {
+#   e = eval(substitute(list(...)), .data, parent.frame())
+#   data.frame(e)
+# }
 
 
 ##########
