@@ -108,10 +108,8 @@ util$trim_levels.data.frame <- function(x) {
   x
 }
 
-util$kill_names <- function(x) { names(x) = NULL; x }
-
-
 #  Variants on table()
+#  Probably are standard functions to use instead
 
 util$table.freq <- function(...)  table(...) / sum(table(...))
 
@@ -137,6 +135,7 @@ util$table.cond <- function(...) {
 }
 
 util$table.range <- function(x, min=NULL, max=NULL) {
+  ## DEPRECATED: use factor() on both sides, instead, to specify the allowable range
   # like table(), but only for integers, and forces a contiguous range of bins
   # so counts of 0 can appear.  Useful if you want to compare tables between
   # different datasets.
@@ -217,35 +216,11 @@ util$merge.list <- function(x,y,only.new.y=FALSE,append=FALSE,...) {
    return(out)
 }
 
-util$lax_rbind <- function(...) {
-  # DEPRECATED: use plyr::rbind.fill() instead
-  inputs = list(...)
-  each_names = sapply(inputs, names)
-  all_names = unique(c(each_names, recursive=TRUE))
-  if (is.data.frame(inputs[[1]]) && all(dim(inputs[[1]])==c(0,0)))
-    inputs[[1]] = NULL
-  for (k in 1:length(inputs)) {
-    if (is.null(inputs[[k]])) next
-    more = setdiff(all_names, names(inputs[[k]]))
-    names(inputs[[k]]) = c(names(inputs[[k]]), more)
-    # inputs[[k]][,more] = NA
-  }
-  do.call(rbind, inputs)
-}
-
 util$fill_bool <- function(bool, true='yes', false='no') {
   ret = rep(NA,length(bool))
   names(ret) = names(bool)
   ret[bool] = true
   ret[!bool] = false
-  ret
-}
-
-util$trmap <- function(vec, translation_table) {
-  # pre-obsoleted by chartr() ?  like unix "tr"
-  ret = rep(NA, length(vec))
-  for (x in names(translation_table))
-    ret[as.c(vec)==x] = translation_table[[x]]
   ret
 }
 
@@ -276,16 +251,6 @@ util$inject <- function(collection, start, fn) {
     acc = fn(acc, x)
   acc
 }
-
-# util$select <- function(collection, fn) {
-#   # like lisp filter.  (named after ruby)
-#   # nice for lists.  not useful for vectors, use boolean vector indexing instead.
-#   r = c()
-#   for (x in collection)
-#     if (fn(x))
-#       r = c(r, x)
-#   r
-# }
 
 util$xprod <- function(xs,ys) {
   ret = list()
@@ -322,6 +287,12 @@ util$listprint <- function(x) {
   printf("%s\n", s)
 }
 
+# http://stackoverflow.com/questions/1189759/expert-r-users-whats-in-your-rprofile/2139002#2139002
+util$h = utils::head
+util$s = base::summary
+
+
+
 # improved list of objects
 # http://stackoverflow.com/questions/1358003/tricks-to-manage-the-available-memory-in-an-r-session
 util$.ls.objects <- function (pos = 1, pattern, order.by,
@@ -332,19 +303,23 @@ util$.ls.objects <- function (pos = 1, pattern, order.by,
     obj.class <- napply(names, function(x) as.character(class(x))[1])
     obj.mode <- napply(names, mode)
     obj.type <- ifelse(is.na(obj.class), obj.mode, obj.class)
+    obj.prettysize <- napply(names, function(x) {
+                           capture.output(print(object.size(x), units = "auto")) })
     obj.size <- napply(names, object.size)
     obj.dim <- t(napply(names, function(x)
                         as.numeric(dim(x))[1:2]))
     vec <- is.na(obj.dim)[, 1] & (obj.type != "function")
     obj.dim[vec, 1] <- napply(names, length)[vec]
-    out <- data.frame(obj.type, obj.size, obj.dim)
-    names(out) <- c("Type", "Size", "Rows", "Columns")
+    out <- data.frame(obj.type, obj.size, obj.prettysize, obj.dim)
+    names(out) <- c("Type", "Size", "PrettySize", "Rows", "Columns")
+    out = subset(out, Type != "function")
     if (!missing(order.by))
         out <- out[order(out[[order.by]], decreasing=decreasing), ]
     if (head)
         out <- head(out, n)
     out
 }
+
 # shorthand
 util$lsos <- function(..., n=10) {
     .ls.objects(..., order.by="Size", decreasing=TRUE, head=TRUE, n=n)
@@ -587,6 +562,33 @@ util$dopng <- function(filename,..., cmd) {
   if (exists('OPEN') && OPEN)  system(sprintf("open %s", filename))
 }
 
+util$dosink <- function(filename,cmd, open=NULL) {
+  sink(filename)
+  eval(cmd)
+  sink(NULL)
+  if (prio_check(open, exists('OPEN') && OPEN))
+    system(sprintf("open %s", filename))
+}
+
+util$dosvg <- function(filename, ..., cmd, open=NULL) {
+  library("RSvgDevice")
+  devSVG(filename, ...)
+  eval(cmd)
+  dev.off()
+  if (prio_check(open, exists('OPEN') && OPEN))
+    system(sprintf("open %s", filename))
+}
+
+util$prio_check = function(...) {
+  vars = list(...)
+  for (i in 1:length(vars)) {
+    if (!is.null(vars[[i]]) && !is.na(vars[[i]]))
+      return(vars[[i]])
+  }
+  FALSE
+}
+
+
 ##########
 
 #
@@ -680,101 +682,6 @@ util$list2df <- function(ls) {
   ret
 }
 
-util$matrix2df <- function(x) {
-  # sapply() with fn() yielding lists returns a matrix with named rows/cols ...
-  # and whenever you name-index into this thing it return a list ... yuck
-  # make that shit more normal.
-  if (class(x) != 'matrix') stop("why is class ",class(x))
-  colnames = dimnames(x)[[2]]
-  if (nrow(x) > 1)
-    data.frame(
-      sapply(colnames, function(n) unlist(x[,n])),
-      row.names=row.names(x))
-  else
-    # because sapply returns a named vector in this case...
-    data.frame(
-      t(sapply(colnames, function(n) unlist(x[,n]))),
-      row.names=row.names(x))
-}
-
-util$dfapply <- function(collection, fn) {
-  # like sapply/lapply except it expects fn() to yield lists.
-  # each list gets coerced into a single row of a returned dataframe.
-  # ALTERNATIVE: adply() -- i think -- from http://had.co.nz/plyr/
-
-  r = sapply(collection, fn)
-  r = base::t(r)
-  # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
-  if (length(unique(dimnames(r)[[2]])) == 1) {
-    r = base::t(r)
-    dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
-  }
-  r = matrix2df(r)
-  # row.names(r) = collection
-  r
-}
-
-
-util$df2matrix <- function(d, bycols, targetcol,
-      targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
-{
-  # for df's that essentially store sparse matrices.  make a real matrix via
-  # by()-like conditioning on multiple columns ... a contingency table.
-  # Design goal: inspired by table(), which does the same thing, except cells are always counts.
-  #
-  # This is *NOT* the inverse of matrix2df !  would be good to change naming.
-  #
-  # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size":
-  # > head(d)
-  #   size           ps  t acc
-  # 1    2 0.0009765625 -1 668
-  # 2    2 0.0009765625  0 668
-  # 3    2 0.0009765625 20 670
-  # 4    2 0.0009765625 50 664
-  #
-  # you do:
-  # > df2matrix(head(d), c('ps','t'), 'acc', mean)
-  #               -1   0  20  50
-  # 0.0009765625 668 668 670 664
-  # 0.5          668 668  NA  NA
-  #
-  # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
-  #
-  # ALTERNATIVE: daply() from hadley wickham's plyr: http://had.co.nz/plyr/
-
-  for (j in 1:length(bycols))
-    d[,bycols[j]] = factor(d[,bycols[j]])
-
-  the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
-
-  # the by() cascade:
-  # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
-  #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
-  # so recursively build that linked list of closures, from right to left.
-  by_cascade = list()
-  by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
-
-  for (j in length(bycols):1) {
-    by_cascade[[j]] = with(list(j=j),
-      function(x) {
-        by(x, x[,bycols[j]], by_cascade[[j+1]])
-      }
-    )
-  }
-
-  b = by_cascade[[1]](d)
-  m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
-
-  # simplest and slowest: dont use any margins for assignments.
-  # yes, this would be extremely speedy in c++
-  all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
-  for (i in 1:length(all_spots)) {
-    inds = all_spots[[i]]
-    m[t(inds)] = b[[inds]]
-  }
-  m
-}
-
 util$kill_df_lists <- function(d) {
   # if you have internal lists inside your dataframe.  if you always use
   # matrix2df this should never happen.  but sometimes it does.  yikes!
@@ -814,3 +721,144 @@ while("util" %in% search())
 attach(util)
 
 ##########
+
+
+#########        Deprecated stuff      ################
+
+## DEPRECATED: use as.data.frame.table() instead, i think.
+# util$matrix2df <- function(x) {
+#   # sapply() with fn() yielding lists returns a matrix with named rows/cols ...
+#   # and whenever you name-index into this thing it return a list ... yuck
+#   # make that shit more normal.
+#   if (class(x) != 'matrix') stop("why is class ",class(x))
+#   colnames = dimnames(x)[[2]]
+#   if (nrow(x) > 1)
+#     data.frame(
+#       sapply(colnames, function(n) unlist(x[,n])),
+#       row.names=row.names(x))
+#   else
+#     # because sapply returns a named vector in this case...
+#     data.frame(
+#       t(sapply(colnames, function(n) unlist(x[,n]))),
+#       row.names=row.names(x))
+# }
+
+## DEPRECATED: use plyr::adply() or something similar, instead
+# util$dfapply <- function(collection, fn) {
+#   # like sapply/lapply except it expects fn() to yield lists.
+#   # each list gets coerced into a single row of a returned dataframe.
+#   # ALTERNATIVE: adply() -- i think -- from http://had.co.nz/plyr/
+# 
+#   r = sapply(collection, fn)
+#   r = base::t(r)
+#   # sapply gives real f'd up stuff for singleton list return values.  compare replicate(10,list(a=unif(1))) vs replicate(10,list(a=runif(1),b=runif(1)).  and the transposes are weirder
+#   if (length(unique(dimnames(r)[[2]])) == 1) {
+#     r = base::t(r)
+#     dimnames(r) = list(NULL, unique(dimnames(r)[[1]]))
+#   }
+#   r = matrix2df(r)
+#   # row.names(r) = collection
+#   r
+# }
+
+
+## DEPRECATED: use xtabs() instead
+# util$df2matrix <- function(d, bycols, targetcol,
+#       targetfn = if (is.numeric(d[,targetcol])) mean else most_common)
+# {
+#   # for df's that essentially store sparse matrices.  make a real matrix via
+#   # by()-like conditioning on multiple columns ... a contingency table.
+#   # Design goal: inspired by table(), which does the same thing, except cells are always counts.
+#   #
+#   # This is *NOT* the inverse of matrix2df !  would be good to change naming.
+#   #
+#   # e.g. you want to know the effects of "ps" and "t" on "acc", marginalizing out "size":
+#   # > head(d)
+#   #   size           ps  t acc
+#   # 1    2 0.0009765625 -1 668
+#   # 2    2 0.0009765625  0 668
+#   # 3    2 0.0009765625 20 670
+#   # 4    2 0.0009765625 50 664
+#   #
+#   # you do:
+#   # > df2matrix(head(d), c('ps','t'), 'acc', mean)
+#   #               -1   0  20  50
+#   # 0.0009765625 668 668 670 664
+#   # 0.5          668 668  NA  NA
+#   #
+#   # then heatmap(.Last.value, Rowv=NA,Colv=NA,scale='none') or whatever else your heart desires
+#   #
+#   # ALTERNATIVE: daply() from hadley wickham's plyr: http://had.co.nz/plyr/
+# 
+#   for (j in 1:length(bycols))
+#     d[,bycols[j]] = factor(d[,bycols[j]])
+# 
+#   the_dimnames = lapply(1:length(bycols),  function(j)  levels((d[,bycols[j]])) )
+#   names(the_dimnames) = bycols
+# 
+#   # the by() cascade:
+#   # we want, for bycols=c('ps','t') and targetcol='acc', finalfn=mean:
+#   #     by(d,d$ps, function(x) by(x,x$t, function(x) mean(x$acc)))
+#   # so recursively build that linked list of closures, from right to left.
+#   by_cascade = list()
+#   by_cascade[[length(bycols)+1]] = function(x) targetfn(x[,targetcol])
+# 
+#   for (j in length(bycols):1) {
+#     by_cascade[[j]] = with(list(j=j),
+#       function(x) {
+#         by(x, x[,bycols[j]], by_cascade[[j+1]])
+#       }
+#     )
+#   }
+# 
+#   b = by_cascade[[1]](d)
+#   m = array(NA, dim=sapply(the_dimnames,length), dimnames=the_dimnames)
+# 
+#   # simplest and slowest: dont use any margins for assignments.
+#   # yes, this would be extremely speedy in c++
+#   all_spots = multi_xprod(lapply(1:length(bycols), function(j) 1:length(the_dimnames[[j]])))
+#   for (i in 1:length(all_spots)) {
+#     inds = all_spots[[i]]
+#     m[t(inds)] = b[[inds]]
+#   }
+#   m
+# }
+
+## DEPRECATED use chartr()
+# util$trmap <- function(vec, translation_table) {
+#   # pre-obsoleted by chartr() ?  like unix "tr"
+#   ret = rep(NA, length(vec))
+#   for (x in names(translation_table))
+#     ret[as.c(vec)==x] = translation_table[[x]]
+#   ret
+# }
+
+## DEPRECATED: kinda lame
+# util$kill_names <- function(x) { names(x) = NULL; x }
+
+## DEPRECATED: use plyr::rbind.fill() instead
+# util$lax_rbind <- function(...) {
+#   inputs = list(...)
+#   each_names = sapply(inputs, names)
+#   all_names = unique(c(each_names, recursive=TRUE))
+#   if (is.data.frame(inputs[[1]]) && all(dim(inputs[[1]])==c(0,0)))
+#     inputs[[1]] = NULL
+#   for (k in 1:length(inputs)) {
+#     if (is.null(inputs[[k]])) next
+#     more = setdiff(all_names, names(inputs[[k]]))
+#     names(inputs[[k]]) = c(names(inputs[[k]]), more)
+#     # inputs[[k]][,more] = NA
+#   }
+#   do.call(rbind, inputs)
+# }
+
+# util$select <- function(collection, fn) {
+#   # like lisp filter.  (named after ruby)
+#   # nice for lists.  not useful for vectors, use boolean vector indexing instead.
+#   r = c()
+#   for (x in collection)
+#     if (fn(x))
+#       r = c(r, x)
+#   r
+# }
+
