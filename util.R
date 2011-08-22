@@ -238,8 +238,6 @@ util$msg <- function(...)  cat(..., "\n", file=stderr())
 
 util$h = utils::head
 
-util$s = base::summary
-
 util$ppy <- function(x, column.major=FALSE, ...) {
   # pretty-print as yaml.  intended for rows with big textual cells.
   # a la mysql's \G operator
