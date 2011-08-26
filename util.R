@@ -387,6 +387,10 @@ util$vim <- function(...) {
   system(paste("vim",...))
 }
 
+util$ll <- function(...) {
+  system(paste("ls","-l",...))
+}
+
 util$newwin <- function(x) {
   # Takes object printout into new file... dosink(OPEN=T) kinda subsumes this
   f = paste("/tmp/tmp.", round(runif(1)*100),".txt",  sep='')
@@ -406,7 +410,7 @@ util$dopdf <- function(filename,..., cmd) {
   pdf(filename, ...)
   eval(cmd)
   dev.off()
-  if (prio_check(open, exists('OPEN') && OPEN))
+  if (exists('OPEN') && OPEN)
     system(sprintf("open %s", filename))
 }
 
@@ -414,7 +418,7 @@ util$dopng <- function(filename,..., cmd) {
   png(filename, ...)
   eval(cmd)
   dev.off()
-  if (prio_check(open, exists('OPEN') && OPEN))
+  if ((exists('OPEN') && OPEN))
     system(sprintf("open %s", filename))
 }
 
